@@ -1,0 +1,1298 @@
+---
+title: "Metagenome QC analysis"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html: 
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+      caption: Code
+---
+
+```{r setup, include=FALSE}
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida_omic/src")
+```
+
+In this Quarto document, we perform quality control on the tissue samples and compare them with the vaginal swab samples.
+
+The steps performed are as follows:
+
+1. Identify low quality samples
+2. Remove spike-in
+3. Remove low qualit samples and samples with zero counts after spike-in removal
+4. Filter out taxa with low abundance across samples at every level
+5. Visualize taxonomy (barplot)
+6. Rarefy
+
+visualize tissue samples before and after spike-in?
+
+### Load Libraries
+```{r Libraries}
+#| code-fold: true
+#| output: false
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(RColorBrewer)
+library(scales)
+select <- dplyr::select
+
+#################
+# COLOUR PALLET #
+#################
+pal <- c(
+  #scales::hue_pal()(8),
+  c(
+    "#4E79A7",
+    "#F28E2B",
+    "#E15759",
+    "#76B7B2",
+    "#59A14F",
+    "#EDC948",
+    "#B07AA1",
+    "#FF9DA7",
+    "#9C755F",
+    "#BAB0AC"
+  ),
+  RColorBrewer::brewer.pal(8, "Set2"),
+  RColorBrewer::brewer.pal(8, "Accent"),
+  RColorBrewer::brewer.pal(8, "Pastel2"),
+  RColorBrewer::brewer.pal(9, "Pastel1"),
+  RColorBrewer::brewer.pal(9, "Set1")
+)
+taxonomy <- c(
+  "kingdom",
+  "phylum",
+  "class",
+  "order",
+  "family",
+  "genus",
+  "species",
+  "strain"
+)
+
+#########
+# PATHS #
+#########
+input_dir <- "../data/"
+
+vagswab_counts_path <- "../Tidy_data/Metagenomics/Metageonome_all_vagswab_metaphlan.csv"
+tissue_counts_path <- "../Tidy_data/Metagenomics/Metageonome_all_tissue_metaphlan.csv"
+
+count_info_vagswab_path <- "../Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv"
+count_info_tissue_path <- "../Tidy_data/Metagenomics/Read_count_info_tissue.csv"
+```
+
+
+### Load Data
+```{r Load-data}
+#| results: hold
+#| output: false
+#| code-fold: true
+#############
+# LOAD DATA #
+#############
+vagswab_counts <- read_csv(vagswab_counts_path)
+tissue_counts <- read_csv(tissue_counts_path)
+count_info_vagswab <- read_csv(count_info_vagswab_path)
+count_info_tissue <- read_csv(count_info_tissue_path)
+```
+
+## Understanding the data
+
+The dataset delivered from the sequencing team is structured as follows:
+
+Each **row** represents a taxon and each **column** represents a sample.  
+
+- Each row corresponds to one taxon, described hierarchically in the `clade_name` column.  
+- `clade_name` encodes the taxonomy from  
+  *kingdom → phylum → class → order → family → genus → species → strain*,  
+  separated by `"|"` and prefixed with `"k__"`, `"p__"`, `"c__"`, etc.  
+- Each sample column contains the **relative abundance (%)** of that taxon in that sample.  
+- Importantly, the values are **already percentages**, not counts.  
+  This means that when the rows are grouped by taxonomic level, the abundances sum to **100%** (or 0% if no taxa remain after filtering) for each individual sample.  
+
+This is demonstrated in the code below:
+
+```{r visualize-the-data-structure}
+t <- set_names(taxonomy, seq_along(taxonomy))
+sample_cols <- names(tissue_counts)[-c(1)]
+
+tissue_long <- tissue_counts %>%
+  mutate(
+    level = factor(
+      t[as.character(str_count(clade_name, "\\|") + 1)],
+      levels = taxonomy
+    ),
+    .after = "clade_name"
+  ) %>%
+  group_by(level) %>%
+  summarise(across(all_of(sample_cols), ~ sum(.))) %>%
+  pivot_longer(
+    where(is.numeric),
+    names_to = "sample",
+    values_to = "abundance"
+  )
+
+# Now we select a single sample and see that it adds up to a 100 for each level
+tissue_long %>%
+  filter(sample == "S30")
+```
+
+For example, the row
+`k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Prevotellaceae`
+represents the taxon *family* *Prevotellaceae* within the *phylum* *Bacteroidota*, and the entry in sample `S60` shows its relative abundance in that sample.
+
+```{r}
+tissue_counts %>%
+  mutate(
+    level = factor(
+      t[as.character(str_count(clade_name, "\\|") + 1)],
+      levels = taxonomy
+    ),
+    .after = "clade_name"
+  ) %>%
+  select(clade_name, level, S60) %>%
+  filter(level == "family") %>%
+  filter(S60 != 0)
+```
+
+This structure makes it possible to:
+
+- **Collapse or expand** to different taxonomic levels.  
+- **Check internal consistency**, since within each level the abundances across taxa sum to 100%.  
+- **Easily visualize** community composition at different levels.  
+
+The purpose of this section is to help students in the lab — and my future self — to quickly grasp the structure of the data and serve as an introduction to a tutorial on how to perform QC on shotgun metagenome data.
+
+controls include sequencing negative controls and extraction negative controls.
+Some samples have been run twice in individual runs (vagswab) or as new extractions (tissue)
+
+## Identify matching samples
+```{r matching-samples}
+# Identify matching samples between vagswab and tissue df
+intersection <- intersect(
+  colnames(vagswab_counts)[-1],
+  colnames(tissue_counts)[-1]
+)
+
+smpls <- tibble(vagswab = intersection, tissue = intersection) %>%
+  add_case(vagswab = setdiff(names(vagswab_counts)[-1], intersection)) %>%
+  add_case(tissue = setdiff(names(tissue_counts)[-1], intersection)) %>%
+  filter(if_any(everything(.), ~ !(str_detect(., "_ex|_seq|_Seq")))) %>%
+  # get sample type:
+  mutate(
+    type = ifelse(
+      str_detect(coalesce(tissue, vagswab), "_"),
+      str_extract(coalesce(tissue, vagswab), "1W|1M|3M|BL|6M"),
+      "S"
+    )
+  )
+
+# check that all samples are overlaping between the count_info table and the count tables
+setdiff(names(vagswab_counts)[-1], count_info_vagswab$svamp_ID)
+setdiff(count_info_vagswab$svamp_ID, names(vagswab_counts)[-1])
+
+setdiff(names(tissue_counts)[-1], count_info_tissue$svamp_ID)
+setdiff(count_info_tissue$svamp_ID, names(tissue_counts)[-1])
+
+###############################################
+# VISUALIZE PAIRED TISSUE AND VAGSWAB SAMPLES #
+###############################################
+lvl <- c("S", "BL", "1W", "3M", "6M", "1M")
+smpls %>%
+  mutate(type = factor(.$type, levels = lvl)) %>%
+  mutate(
+    match = if_else(vagswab == tissue, "match", "single", missing = "single")
+  ) %>%
+  # filter(match) %>% # keep only matches
+  ggplot(aes(x = type)) +
+  geom_bar(aes(fill = match)) +
+  scale_y_continuous(breaks = seq(0, 160, 5)) + # breaks every 5
+  labs(
+    title = "Count of paired vagswab and tissue samples",
+    x = "Type",
+    y = "Number of Matches or Singles"
+  ) +
+  theme_minimal() +
+  facet_wrap(~match)
+```
+
+## Counts before spike-in removal
+```{r filtering-low-read-samples}
+#| fig-width: 22
+#| fig-height: 8
+
+# Identify samples with low total reads < 20 million total reads (human + bacterial)
+count_info_vagswab %>%
+  filter(after_fastp < 20000000) %>% # 1 sample
+  knitr::kable()
+count_info_tissue %>%
+  filter(after_fastp < 20000000) # 0 samples
+
+
+# check bacterial reads bellow 100k
+count_info_vagswab %>%
+  filter(after_kraken2_host_removal < 100000) %>%
+  knitr::kable()
+count_info_tissue %>%
+  filter(after_kraken2_host_removal < 100000)
+
+###############################
+# VISUALIZE COUNTS PER SAMPLE #
+###############################
+l <- list("vagswab" = count_info_vagswab, "tissue" = count_info_tissue)
+
+df <- l %>%
+  imap(
+    ~ .x %>%
+      select(., svamp_ID, after_fastp, after_kraken2_host_removal) %>%
+      mutate(., type = .y) %>%
+      mutate(
+        .,
+        type = ifelse(str_detect(.$svamp_ID, "_ex_|_seq|_Seq"), "Ctrl", .$type)
+      )
+  ) %>%
+  bind_rows()
+
+count_info <- df %>%
+  pivot_longer(
+    cols = c(after_fastp, after_kraken2_host_removal),
+    names_to = "step",
+    values_to = "count"
+  ) %>%
+  mutate(svamp_ID = factor(.$svamp_ID, levels = unique(sort(.$svamp_ID))))
+#mutate(
+#svamp_ID = fct_reorder(svamp_ID, count)  # reorders within facet
+#)
+
+p <- ggplot(count_info, aes(x = svamp_ID, y = count, fill = step)) +
+  geom_col(width = 0.7, position = "dodge") +
+  facet_grid(step ~ type, scales = "free", drop = TRUE, space = "free") +
+  scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+  scale_y_continuous(labels = label_comma()) + # <-- commas
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 7)
+  ) +
+  labs(x = "svamp_ID", y = "Count", fill = "Step") +
+  # Add red horizontal lines
+  geom_hline(yintercept = 20000000, color = "red", linetype = "dashed") +
+  geom_hline(yintercept = 2000, color = "red", linetype = "dashed")
+
+p
+ggsave(
+  "../Results/Tissue_QC/counts_vagswab_and_tissue_plot.png",
+  p,
+  width = 22,
+  height = 8,
+  bg = "white"
+)
+```
+
+The upper red dashed line marks 20 million reads, the lower cut-off used to flag vagswab samples with insufficient sequencing depth.
+At the **after_fastp stage**, these counts include reads of both bacterial and human origin.
+
+The **after_kraken2_host_removal** stage reflects only bacterial reads, after human-derived sequences have been filtered out.
+
+Before host removal, tissue samples generally have higher read counts, as you could expect, since biopsy samples naturally contain more DNA which are largly derived from the host.
+
+After host removal, there is a sharp decline in counts for most samples, with the majority now falling between 20 million and 10,000 reads. At this stage, vagswab and tissue samples appear more similar in read counts. However, the tissue samples were sequenced with a bacterial spike-in, which must be removed before making direct comparisons between the two sample types.
+
+The spike in is bateria is "s__Alicyclobacillus_acidiphilus_t__SGB30417"
+
+## Remove-spike-in
+
+#### Gabriellas version (only strain level)
+```{r remove-spike-in-Gabriella}
+#| eval: false
+#| code-fold: true
+
+# Gabriellas code for removing spike-in:
+#  - Keeps only the species_strain table.
+#  - Renormalizes so that species_strain abundances sum to 100% per sample.
+#  - Higher taxonomic levels (family, genus, etc.) would thus need to be
+#    recalculated from the renormalized species_strain to be used later.
+
+###################
+# REMOVE SPIKE-IN #
+###################
+# Make a "species_strain" column to identify the spike-in
+tissue_counts_clean <- tissue_counts %>%
+  separate(
+    col = clade_name,
+    into = taxonomy,
+    sep = "\\|",
+    fill = "right"
+  ) %>%
+  mutate(species_strain = paste0(species, "_", strain)) %>%
+  # filters out any rows which sums to zero:
+  filter(if_any(where(is.double), ~ .x > 0)) %>%
+
+  # removes any rows with species and strain as NA
+  filter(!species_strain %in% "NA_NA") %>%
+  filter(!strain %in% NA) %>%
+  # select only the specie_strain taxa column:
+  select(species_strain, where(is.double)) %>%
+
+  # remove the spike-in bacteria
+  filter(!species_strain %in% "s__Alicyclobacillus_acidiphilus_t__SGB30417") %>%
+  # remove any taxonomic rows that have zero relative abundance in all samples
+  filter(if_any(where(is.double), ~ .x > 0))
+
+dim(tissue_counts_clean) # 41 taxa in 94 samples
+
+##############################
+# REMOVE ZERO COLSUM SAMPLES #
+##############################
+# removes samples with colsum = zero (55 smaples + neg ctrl)
+tissue_counts_clean <- tissue_counts_clean %>%
+  # see which samples sums to zero:
+  # select(species_strain, where(~ is.numeric(.x) && sum(.x, na.rm = TRUE) == 0) )
+  select(
+    "species_strain",
+    where(~ is.numeric(.x) && sum(.x, na.rm = TRUE) != 0)
+  )
+
+dim(tissue_counts_clean) # 41 taxa in 38 samples
+
+####################
+# BACTERIAL COUNTS #
+####################
+# look at the total bacterial count after removing the Alicyclobacillus
+tissue_counts_clean %>%
+  summarise(across(where(is.double), ~ sum(.x, na.rm = TRUE))) %>% # column sums
+  pivot_longer(everything(), names_to = "svamp_ID", values_to = "relab") %>% # long format
+  left_join(count_info_tissue, by = "svamp_ID") %>% # add count info
+  mutate(
+    bac_counts_no_spikein = relab * after_kraken2_host_removal / 100,
+    .after = "relab"
+  ) %>%
+  {
+    . ->> count_info_tissue_no_spike
+  } %>%
+  filter(bac_counts_no_spikein < 2000) # one sample (S19, 372 bacterial reads)
+
+
+#######################################
+# RE-NORMALIZE AFTER SPIKE-IN REMOVAL #
+#######################################
+tissue_counts_renorm <- tissue_counts_clean %>%
+  # remove ctrl and low bacteria sample
+  select(-Pos_Seq_Ctrl, -S19) %>%
+  # transpose:
+  pivot_longer(-species_strain, names_to = "svamp_ID", values_to = "value") %>%
+  pivot_wider(names_from = "species_strain", values_from = "value") %>%
+
+  # Add relab and bac_counts_no_spikein information:
+  left_join(
+    select(count_info_tissue_no_spike, svamp_ID, relab, bac_counts_no_spikein),
+    .,
+    by = "svamp_ID"
+  ) %>%
+  # Renormalize the relab for the actual taxa (without spike in) to 100%
+  rowwise() %>%
+  mutate(across(starts_with("s__"), ~ .x / relab * 100)) %>%
+  mutate(ROW_SUM = sum(c_across(starts_with("s__"))), .after = "svamp_ID") %>%
+  filter(bac_counts_no_spikein >= 2000, !(is.na(ROW_SUM))) %>%
+  ungroup()
+
+#############################
+# PLOT RE-SEQUENCED SAMPLES #
+#############################
+n <- names(select(tissue_counts, contains("extr1")))
+s <- str_remove(n, "_extr1")
+n <- c(n, s) # samples sequenced twice
+
+#inspect the read levels for samples sequenced twice:
+df_long <- tissue_counts_renorm %>%
+  filter(svamp_ID %in% n) %>%
+  filter(if_any(starts_with("s__"), ~ .x > 0)) %>%
+  pivot_longer(
+    cols = starts_with("s__"),
+    names_to = "species",
+    values_to = "abundance"
+  ) %>%
+  filter(abundance != 0)
+
+ggplot(df_long, aes(x = svamp_ID, y = abundance, fill = species)) +
+  geom_col(position = "stack") +
+  labs(
+    x = "Sample ID",
+    y = "Relative abundance (%)",
+    fill = "Species"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+##################################
+# SAVE RENORMALIZED STRAIN LEVEL #
+##################################
+tissue_counts_renorm_t <- tissue_counts_renorm %>%
+  select(-ROW_SUM, -relab, -bac_counts_no_spikein, -ends_with("_extr1")) %>%
+  # removes the second sequencing of sample S01 and S02:
+  filter(!(grepl("_extr1", .$svamp_ID))) %>%
+  # transpose:
+  pivot_longer(-svamp_ID, names_to = "species_strain", values_to = "value") %>%
+  pivot_wider(names_from = "svamp_ID", values_from = "value")
+
+write_csv(
+  tissue_counts_renorm_t,
+  "../Results/Tissue_QC/Metageonome_all_tissue_metaphlan_no_spikein.csv"
+)
+write_csv(
+  count_info_tissue_no_spike,
+  "../Results/Tissue_QC/Read_count_info_tissue_no_spikein.csv"
+)
+
+# tissue_counts_renorm_t <- read_csv("../Results/Tissue_QC/Metageonome_all_tissue_metaphlan_no_spikein.csv")
+```
+
+#### My version (all taxonomy levels)
+```{r spikein-removal-and-renormalization}
+#| code-fold: false
+
+# final version
+###########################
+# GET SPIKE-IN PERCENTAGE #
+###########################
+# 2. Get spike-in percentage per sample from strain level
+spike_pct <- tissue_counts %>%
+  filter(str_detect(
+    clade_name,
+    "s__Alicyclobacillus_acidiphilus\\|t__SGB30417"
+  )) %>%
+  pivot_longer(
+    cols = where(is.double),
+    names_to = "sample",
+    values_to = "spike_pct"
+  ) %>%
+  select(sample, spike_pct) %>%
+  deframe()
+
+###########################################
+# GET SPIKE-IN CLADE NAMES FOR ALL LEVELS #
+###########################################
+# identify taxa levels to remove spicke-in percentage from
+# by looking at the Negative-spik-in control sample
+spike_clade <- tissue_counts %>%
+  filter(Neg_Seq_Ctrl_Spiked != 0) %>%
+  select(clade_name) %>%
+  deframe()
+
+
+#########################################################
+# REMOVE SPIKE-IN AND RE-NORMALIZE COUNTS AFTER REMOVAL #
+#########################################################
+t <- set_names(taxonomy, seq_along(taxonomy))
+sample_cols <- names(tissue_counts)[-c(1)] # [-c(1,2,3)] removes ctrls
+
+tissue_no_spike <- tissue_counts %>%
+  # Identify the eight taxonomy levels
+  mutate(
+    level = factor(
+      t[as.character(str_count(clade_name, "\\|") + 1)],
+      levels = taxonomy
+    ),
+    .after = "clade_name"
+  ) %>%
+
+  # Remove spike-in row
+  filter(
+    !str_detect(clade_name, "s__Alicyclobacillus_acidiphilus\\|t__SGB30417")
+  ) %>%
+
+  # remove percentage spike-in from all other taxa levels
+  mutate(
+    across(
+      all_of(sample_cols),
+      ~ if_else(clade_name %in% spike_clade, .x - spike_pct[cur_column()], .x)
+    )
+  )
+
+tissue_renorm <- tissue_no_spike %>%
+  # Re-normalize per level & sample
+  # nest(.by = level) %>%
+  group_by(level) %>%
+  mutate(across(
+    all_of(sample_cols),
+    ~ {
+      total <- sum(.x, na.rm = TRUE) # sum for this sample at this level
+      #if (total == 0) 0 else .x / total * 100
+      pct <- spike_pct[cur_column()] # spike-in %
+      if (pct == 100) 0 else .x / total * 100
+    },
+    .names = "{.col}"
+  )) %>%
+  ungroup()
+
+# Test that all levels add up to 100 per sample
+tissue_renorm %>%
+  group_by(level) %>%
+  summarise(across(where(is.double), ~ sum(.))) %>%
+  pivot_longer(
+    where(is.numeric),
+    names_to = "sample",
+    values_to = "abundance"
+  ) %>%
+  pivot_wider(names_from = "level", values_from = "abundance")
+
+t <- tissue_renorm %>%
+  select(1:2, "S60") %>%
+  # Re-normalize per level & sample
+  nest(.by = level)
+
+t$data[[5]] %>% arrange(desc(S60))
+
+t_seq <- set_names(taxonomy, seq_along(taxonomy))
+tissue_counts %>%
+  mutate(
+    level = t_seq[as.character(str_count(clade_name, "\\|") + 1)],
+    .after = "clade_name"
+  ) %>%
+  select(clade_name, level, S60) %>%
+  filter(level == "family") %>%
+  filter(S60 != 0) %>%
+  arrange(desc(S60))
+```
+
+```{r save-bacterial-counts-info}
+#| code-fold: false
+
+####################
+# BACTERIAL COUNTS #
+####################
+# Calculate bacterial counts after removal of spike-in
+#  using relab, which is the percentage of everything but the spike-in
+count_info_tissue_no_spike <- tissue_no_spike %>%
+  filter(level == "strain") %>%
+  summarise(across(where(is.double), ~ sum(.x, na.rm = TRUE))) %>% # column sums
+  pivot_longer(everything(), names_to = "svamp_ID", values_to = "relab") %>% # long format
+  mutate(spike_pct = spike_pct[.$svamp_ID], .before = "relab") %>%
+  mutate(tot = relab + spike_pct) %>%
+  left_join(count_info_tissue, by = "svamp_ID") %>% # add count info
+  mutate(
+    bac_counts_no_spikein = relab * after_kraken2_host_removal / 100,
+    .after = "relab"
+  )
+
+##############################
+# IDENTIFY SMAPLES TO REMOVE #
+##############################
+samples_to_remove <- count_info_tissue_no_spike %>%
+  arrange(desc(bac_counts_no_spikein)) %>%
+  filter(bac_counts_no_spikein < 2000)
+
+knitr::kable(
+  samples_to_remove,
+  digits = 3,
+  # format = "html",
+  # escape = FALSE,
+  # caption = "Without Quarto processing"
+)
+# one sample (S19, 372 bacterial reads)
+# and 56 samples with zero bacterial counts after spike-in removal
+
+```
+
+## Compare re-sequenced samples 
+```{r compare-re-sequenced-samples}
+#| code-fold: false
+
+#############################
+# PLOT RE-SEQUENCED SAMPLES #
+#############################
+n <- names(select(tissue_counts, contains("extr1")))
+s <- str_remove(n, "_extr1")
+n <- c(n, s) # samples sequenced twice
+
+#inspect the read levels for samples sequenced twice:
+df_long <- tissue_renorm %>%
+  filter(grepl("species", .$level)) %>%
+  # retain only the species and strain info:
+  mutate(clade_name = str_extract(clade_name, "s__.+")) %>%
+  pivot_longer(
+    cols = where(is.double),
+    names_to = "samples",
+    values_to = "abundance"
+  ) %>%
+  filter(samples %in% n) %>%
+  filter(abundance != 0)
+
+ggplot(df_long, aes(x = samples, y = abundance, fill = clade_name)) +
+  geom_col(position = "stack") +
+  labs(
+    x = "Sample ID",
+    y = "Relative abundance (%)",
+    fill = "Species"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+
+Of the eight samples that were sequenced twice within the same sequencing run, only two were successfully sequenced both times — samples S01 and S02.
+Both showed 100% relative abundance of *Lactobacillus crispatus*.
+
+### Save renormalized counts without spike-in
+```{r save-renormalized-tissue-counts}
+#| code-fold: false
+
+#####################################
+# REMOVE ZERO AND LOW COUNT SAMPLES #
+#####################################
+tissue_renorm_filt <- tissue_renorm %>%
+  select(-any_of(samples_to_remove$svamp_ID)) %>%
+  # removes the second sequencing of sample S01 and S02:
+  select(-ends_with("_extr1"))
+
+write_csv(
+  tissue_renorm_filt,
+  "../Results/Tissue_QC/Metageonome_all_tissue_metaphlan_no_spikein.csv"
+)
+write_csv(
+  count_info_tissue_no_spike,
+  "../Results/Tissue_QC/Read_count_info_tissue_no_spikein.csv"
+)
+
+# tissue_renorm_filt <- read_csv("../Results/Tissue_QC/Metageonome_all_tissue_metaphlan_no_spikein.csv")
+```
+
+
+## Bacterial counts after spike-in removal
+```{r plot-renormalized-counts-tissue}
+#| fig-width: 22
+#| fig-height: 8
+#| code-fold: false
+
+#########################################################
+# VISUALIZE RE-NORMALIZED COUNTS AFTER SPIKE-IN REMOVAL #
+#########################################################
+df_long <- count_info_tissue_no_spike %>%
+  select(svamp_ID, bac_counts_no_spikein) %>%
+  # remove controls:
+  filter(!(str_detect(.$svamp_ID, "_ex_|_seq|_Seq"))) %>%
+  pivot_longer(cols = 2, names_to = "step", values_to = "count") %>%
+  mutate(type = "tissue") %>%
+  # cap sample S33 and S60 at to get a better y-axis actual value is 1.7e+07 and 7693787:
+  mutate(count = ifelse(grepl("S33|S60", .$svamp_ID), 1200000, .$count)) %>%
+  bind_rows(count_info, .) %>%
+  filter(step != "after_fastp")
+
+p <- ggplot(df_long, aes(x = svamp_ID, y = count, fill = step)) +
+  geom_col(width = 0.7, position = "dodge") +
+  facet_grid(step ~ type, scales = "free", drop = TRUE, space = "free_x") +
+  scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+  scale_y_continuous(labels = label_comma()) + # <-- commas
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 7)
+  ) +
+  labs(x = "svamp_ID", y = "Count", fill = "Step") +
+  # Add red horizontal lines
+  #geom_hline(yintercept = 20000000, color = "red", linetype = "dashed") +
+  geom_hline(yintercept = 10000, color = "red", linetype = "dashed")
+
+p
+ggsave(
+  "../Results/Tissue_QC/counts_renorm_plot.png",
+  p,
+  width = 22,
+  height = 8,
+  bg = "white"
+)
+```
+
+This plot shows the renormalized read counts of tissue samples after removal of the spike-in bacterium *Alicyclobacillus acidiphilus*.
+Samples S33 and S60 are capped at 1,200,000 reads to better visualize samples with low read counts. Their actual counts are 1.7 × 10⁷ and 7,693,787, respectively.
+The red dashed line marks 10,000 reads.
+A total of 55 samples had zero bacterial reads after spike-in removal.
+
+Note from Gabriellas script regarding tissue samples:
+E250043326_L01_57 (S19) has only 375 reads after removing spike-in, exclude. 
+
+All others have more than 2000 reads. 9 samples have less than 10 000 reads. 
+There are no difference in the bacterial composition in low read samples and high read samples. Keep for now, even the low ones. 
+All vaginal swabs have over 3 M bacterial reads 
+
+36 tissue samples have data after excluding one sample for low reads.
+Of these, S01 and S02 were sequenced twice,
+resulting in 34 unique tissue samples being successfully sequenced.
+
+
+```{r check-sample-ID-Gabriella}
+#| code-fold: true
+
+# check that the samples are the same as Gabriella found
+smpl_35 <- read_delim("/Users/vilkal/Tissue_35_sampleID_list.csv", delim = ";")
+n <- count_info_tissue_no_spike %>%
+  select(svamp_ID, Flowcell_L1_bc) %>%
+  deframe()
+df <- count_info_tissue_no_spike %>% select(Flowcell_L1_bc, svamp_ID) # %>% deframe()
+
+
+G <- setdiff(smpl_35$Flowcell_L1_bc, n[names(tissue_renorm_filt)[-c(1, 2)]])
+M <- setdiff(n[names(tissue_renorm_filt)[-c(1, 2)]], smpl_35$Flowcell_L1_bc)
+
+# samples in Gabriella's table but not in my table
+df %>% filter(Flowcell_L1_bc %in% G)
+# S19, S01_extr1 and S02_extr1 was missing from my samples
+
+# samples in my table but not in Gabriella's
+df %>% filter(Flowcell_L1_bc %in% M)
+# S05, S45 is missing from Gabriellas samples
+
+```
+
+## Visualize tissue data
+
+```{r helper-functions-for-plotting}
+#| code-fold: true
+
+# Section ####
+# order samples by percentage of specified taxa based on assigned microbiome group
+# NB! I found that I got a cleaner looking graph by using gardnerella also for L4 (typ = identity)
+factor.fun <- function(df) {
+  # title1 ----
+  l <- c(
+    "Lactobacillus" = "crispatus",
+    "iners" = "iners",
+    "Gardnerella" = "Gardnerella",
+    "other" = "Gardnerella"
+  )
+  imap(
+    l,
+    ~ filter(df, gr == .y & str_detect(clade_name, .x)) %>%
+      arrange(., desc(abundance)) %>%
+      select(sample, gr) %>%
+      unique() %>%
+      pull(., "sample")
+  ) %>%
+    unlist()
+}
+gr.fun <- function(df) {
+  # clean up the clade_name column
+  df <- df %>%
+    group_by(sample) %>%
+    arrange(desc(abundance)) %>%
+    mutate(clade_name = str_replace_all(clade_name, "\\w__", "")) %>%
+    mutate(clade_name = str_replace_all(clade_name, "\\||_", " ")) %>%
+    ungroup()
+
+  groups <- df %>%
+    group_by(sample) %>%
+    mutate(gr = str_extract(first(clade_name), "^\\w+")) %>%
+    mutate(
+      gr = case_when(
+        str_detect(gr, "Lactobacillus|Gardnerella") ~ gr,
+        TRUE ~ "other"
+      )
+    ) %>%
+    mutate(
+      gr = ifelse(
+        str_detect(first(clade_name), "iners"),
+        "iners",
+        gr
+      )
+    ) %>%
+    ungroup() %>%
+    select(sample, gr) %>%
+    unique() %>%
+    deframe()
+  return(groups)
+}
+
+##################
+# COLOUR PALLETS #
+##################
+#### colour pallet ####
+
+pal_list <- list(
+  Lactobacillus <- c(
+    "#87c7c0",
+    "#a9e7e4",
+    "#c2ebe2",
+    "#A8EDFC",
+    "#A8EDFC",
+    "#A8EDFC",
+    "#7fe2e9",
+    "#7fe2e9",
+    "#83dafb",
+    "#83dafb"
+  ),
+  Gardnerella <- c("#be6a7d", "#8a3c4eff", "#d45265ff", "#f07487ff", "#f1a6b1"),
+  Prevotella <- c(
+    "#e06806ff",
+    "#e2771fff",
+    "#e99a59ff",
+    "#f0c497ff",
+    "#eebc89ff"
+  ),
+  Bacillus <- c("#59a14f", "#77a371ff", "#71a38cff", "#9cd694ff", "#b5ebaeff"),
+  other <- c(
+    "#E3E6AD",
+    "#F8D0A4",
+    "#c4ce96",
+    "#9aacce",
+    "#e1caff",
+    "#abc5bf",
+    "#ffffd4",
+    "#c0a2c1",
+    "#c8ffd5",
+    "#c8ffd5",
+    "#afb7ee",
+    "#ffc8d9",
+    "#ffc8d9",
+    "#e7b993",
+    "#c8ffd5",
+    "#c4cea9",
+    "#a1b37d",
+    "#a6cca7",
+    "#d1b9ee",
+    "#88c29c",
+    "#fdcc8a",
+    "#91c6f7",
+    "#f5f8bd",
+    "#8db1c5",
+    "#fab0aa",
+    "#7cb6b6",
+    "#96f3eb",
+    "#6ececc"
+  )
+)
+
+taxa_order.fun <- function(df) {
+  lvls <- c("Lactobacillus", "Gardnerella", "Prevotella", "Bacillus", "other")
+  gr_lvls <- lvls %>% paste0(., collapse = "|")
+  d <- df_long %>%
+    mutate(
+      gr_lvl = ifelse(
+        str_detect(clade_name, gr_lvls),
+        str_extract(clade_name, gr_lvls),
+        "other"
+      )
+    ) %>%
+    group_by(gr_lvl) %>%
+    arrange(desc(abundance)) %>%
+    select(gr_lvl, clade_name) %>%
+    ungroup() %>%
+    unique() %>%
+    mutate(gr_lvl = factor(.$gr_lvl, levels = lvls)) %>%
+    arrange(gr_lvl) %>%
+    nest(.by = "gr_lvl") %>%
+    mutate(
+      data = map2(
+        gr_lvl,
+        data,
+        ~ if (.x == "other") arrange(.y, as.character(clade_name)) else .y
+      )
+    ) %>%
+    unnest(cols = c(data))
+
+  col <- d %>%
+    group_by(gr_lvl) %>%
+    mutate(col = pal_list[[cur_group_id()]][1:n()]) %>%
+    ungroup() %>%
+    select(-gr_lvl) %>%
+    deframe()
+
+  return(col)
+}
+```
+
+```{r plot-good-quality-samples}
+#| fig-width: 10
+#| fig-height: 8
+#| code-fold: false
+
+# pivot longer and calculate perecentage for the 15 most abundant taxa
+df_long <- tissue_renorm_filt %>%
+  # select taxonomy level
+  filter(grepl("strain", level)) %>%
+  # retain only the species and strain info:
+  mutate(clade_name = str_extract(clade_name, "s__.+")) %>%
+  # removes taxa that sums to zero:
+  filter(sum(c_across(where(is.double))) != 0) %>%
+  # arrange acording to taxa rowsum
+  arrange(desc(rowSums(across(where(is.numeric))))) %>%
+  # mutate(clade_name = factor(.$clade_name, levels = .$clade_name)) %>%
+  # slice_head(., n = 15) %>%
+  pivot_longer(
+    cols = where(is.double),
+    names_to = "sample",
+    values_to = "abundance"
+  )
+
+#########################
+# PRETTY PLOT ADDITIONS #
+#########################
+df_long_ <- df_long %>%
+  # clean up the clade_name column
+  group_by(sample) %>%
+  arrange(desc(abundance)) %>%
+  mutate(taxa = str_replace_all(clade_name, "\\w__", "")) %>%
+  mutate(taxa = str_replace_all(taxa, "\\||_", " ")) %>%
+  ungroup() %>%
+
+  # assigne each sample into a taxa group (one of Lactobacillus, iners, Gardnerella or other )
+  # gr.fun(.) # test
+  mutate(gr = gr.fun(.)[.$sample]) %>%
+
+  # order samples by percentage of taxa within each level of "gr"
+  # factor.fun(.) # test
+  mutate(sample = factor(sample, levels = factor.fun(.))) %>%
+
+  # fix taxa order:
+  mutate(
+    clade_name = factor(.$clade_name, levels = names(taxa_order.fun(.)))
+  ) %>%
+  arrange(clade_name) %>%
+  mutate(taxa = factor(.$taxa, levels = unique(.$taxa))) %>%
+
+  # gets colour for each taxa
+  mutate(col = taxa_order.fun(.)[.$clade_name])
+
+
+####################################################
+# PLOT STRAIN LEVEL ABUNDANCE OF REMAINING SAMPLES #
+####################################################
+col_pal <- df_long_ %>% select(taxa, col) %>% unique() %>% deframe()
+colourCount = length(unique(df_long_$clade_name))
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+#plot the ctrls
+barplot <- ggplot(
+  df_long_,
+  aes(x = sample, y = abundance, fill = taxa) # round(value, digits = 3)
+) +
+  geom_col(width = .9, position = "stack") +
+  # geom_text(aes(label = abundance), position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = col_pal) + # pal[1:colourCount]
+  guides(
+    fill = guide_legend(
+      override.aes = list(size = 2),
+      ncol = 4,
+      byrow = FALSE,
+      keyheight = .4,
+      keywidth = .6
+    )
+  ) +
+  theme_classic() +
+  coord_cartesian(expand = F) +
+  theme(
+    plot.margin = unit(c(1, 2, 1, 2), "cm"),
+    legend.spacing.y = unit(.5, 'cm'),
+    legend.title = element_blank(),
+    legend.text = element_text(margin = margin(r = .3, l = .3, unit = "pt"), ),
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 40, hjust = 1),
+    legend.position = "bottom"
+  )
+
+plot(barplot)
+
+ggsave(
+  "../Results/Tissue_QC/barplot_tissue_renorm.png",
+  barplot,
+  width = 10,
+  height = 8,
+  bg = "white"
+)
+```
+
+## Filter taxonomy
+
+```{r filter-taxa}
+# final
+############################
+# IDENTIFY TAXA TO FILTER #
+###########################
+n_samples <- select(tissue_renorm_filt, starts_with("S")) %>% ncol() # number of good samples
+
+# keep taxa with at least 0.005% in at least 6% (2 out of 34) of samples, or at least 2% relative abundance in at least 1 sample.
+
+# Step 1. split clade name into seperate columns
+temp <- tissue_renorm_filt %>%
+  select(-Pos_Seq_Ctrl) %>% # removes ctrl sample
+  separate(
+    col = clade_name,
+    into = taxonomy,
+    sep = "\\|",
+    #remove = FALSE,
+    fill = "right"
+  ) %>%
+  filter(if_any(where(is.double), ~ .x > 0))
+
+# Step 2. Identify the strains to remove
+strains_to_remove <- temp %>%
+  filter(level == "strain") %>%
+  filter(
+    !(rowSums(across(where(is.double), ~ .x > 0.005)) >=
+      round(0.06 * n_samples) |
+      rowSums(across(where(is.double), ~ .x >= 2)) >= 1)
+  )
+
+strains_to_remove %>%
+  arrange(desc(rowSums(across(where(is.numeric))))) %>%
+  # removes samples with colsum = zero:
+  select(
+    -where(~ is.numeric(.x) && sum(.x) == 0)
+  ) %>%
+  knitr::kable(., digits = 1)
+
+
+# Step 3. Aggregate removed strains by higher levels
+removed_all_lvls <- strains_to_remove %>%
+  # pivot_longer(cols = where(is.double), names_to = "sample", values_to = "removed_abundance") %>%
+  select(-level) %>%
+  pivot_longer(
+    cols = kingdom:strain,
+    names_to = "level",
+    values_to = "name"
+  ) %>%
+  nest(.by = c(level)) %>%
+  mutate(
+    data = map(
+      data,
+      ~ summarise(.x, across(where(is.double), ~ sum(.)), .by = c("name"))
+    )
+  ) %>%
+  mutate(data = setNames(.[["data"]], .$level))
+
+removed_all_lvls
+
+knitr::kable(removed_all_lvls$data[[2]], digits = 1)
+
+
+# Step 4. get longer format and add back clade_names
+# function to get clade name
+get_full_clade.fun <- function(df) {
+  # This will add a new column called match_clade
+  # with the full clade_name that ends with the string from tissue_renorm_filt$clade_name
+  df %>%
+    mutate(
+      match_clade = map_chr(
+        name,
+        ~ {
+          hit <- tissue_renorm_filt$clade_name[str_detect(
+            tissue_renorm_filt$clade_name,
+            paste0(.x, "$")
+          )]
+          if (length(hit) > 0) hit[1] else NA_character_
+        }
+      )
+    ) %>%
+    select(match_clade) %>%
+    pull()
+}
+
+removals <- removed_all_lvls %>%
+  unnest(cols = data) %>%
+  mutate(clade_name = get_full_clade.fun(.))
+
+#############################
+# FILTER AT ALL TAXA LEVELS #
+############################
+# Step 5. Subtract from higher levels
+tissue_adjusted <- tissue_renorm_filt %>%
+  # Join percentages to be subtracted
+  left_join(
+    select(removals, -name, -level),
+    by = "clade_name",
+    suffix = c("", "_rm")
+  ) %>%
+  # Subtract sample-wise values
+  mutate(
+    across(
+      matches("^S\\d\\d$"),
+      ~ .x - coalesce(get(paste0(cur_column(), "_rm")), 0)
+    )
+  ) %>%
+  select(-ends_with("_rm"))
+
+# test
+strains_to_remove %>% pull("S39") %>% sum(.)
+tissue_adjusted %>% filter(level == "genus") %>% pull("S39") %>% sum(.)
+
+#####################################
+# RENORMALIZED FILTERED TAXA VALUES #
+#####################################
+# Step 6. Re-normalize so each sample sums to 100
+tissue_adj_norm <- tissue_adjusted %>%
+  group_by(level) %>%
+  mutate(
+    across(
+      matches("^S\\d\\d$"),
+      ~ .x * 100 / sum(.x, na.rm = TRUE)
+    )
+  ) %>%
+  ungroup()
+
+# test
+tissue_adj_norm %>% filter(level == "genus") %>% pull("S39") %>% sum(.)
+
+```
+
+### Save filtered table
+```{r save-filtered-table}
+tissue_adj_norm %>%
+  select(-Pos_Seq_Ctrl) %>%
+  arrange(level) %>%
+  write_csv(
+    .,
+    "../Results/Tissue_QC/Metageonome_all_tissue_metaphlan_taxa_filt.csv"
+  )
+```
+
+## Rarefy
+```{r rarefy}
+#| code-fold: false
+#| eval: false
+
+#install.packages("phyloseq")
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+#BiocManager::install("phyloseq")
+library(phyloseq)
+#rarefy
+# Separate the 'totalBacterialReads' column
+total_reads <- mpa_renorm$bac_counts_no_spikein
+
+# Subset to just taxa (exclude metadata columns)
+# This assumes all taxa columns come before or are easily selected
+relabund_mat <- mpa_renorm[, 1:233]
+
+# Multiply relative abundance by total reads, round to get integer counts
+count_mat <- round(as.matrix(relabund_mat) * total_reads / 100)
+row.names(count_mat) <- mpa_renorm$Flowcell_L1_bc
+
+meta <- sample_data(mpa_renorm[, c(234:259)])
+rownames(meta) <- mpa_renorm$Flowcell_L1_bc
+
+otu <- otu_table(count_mat, taxa_are_rows = FALSE)
+
+# Make sure it's a matrix and rownames match taxa
+#tax_mat <- as.matrix(tax_df)  # columns = taxonomic ranks
+#tax <- tax_table(tax_mat)
+
+taxa_ids <- colnames(count_mat)
+tax_mat <- as.matrix(taxa_ids) # columns = taxonomic ranks
+
+tax <- tax_table(tax_mat)
+rownames(tax) <- tax_mat
+
+physeq <- phyloseq(otu, meta, tax)
+
+set.seed(123)
+physeq_rare <- rarefy_even_depth(
+  physeq,
+  sample.size = min(sample_sums(physeq)),
+  rngseed = 123
+)
+#rarefy to 2243
+#
+physeq_relab <- transform_sample_counts(physeq_rare, function(x) {
+  x / sum(x) * 100
+})
+
+new_df <- as.data.frame(otu_table(physeq_relab))
+new_df$Flowcell_L1_bc <- row.names(new_df)
+
+```
+
+## Plot vagswab control samples
+```{r plot-control-samples}
+#| fig-width: 8
+#| fig-height: 8
+#| code-fold: false
+
+controls_tissue <- names(tissue_counts)[str_detect(names(tissue_counts), "Seq")]
+controls_vagswab <- names(vagswab_counts)[str_detect(
+  names(vagswab_counts),
+  "ex|seq"
+)]
+taxonomy <- c(
+  "kingdom",
+  "phylum",
+  "class",
+  "order",
+  "family",
+  "genus",
+  "species",
+  "strain"
+)
+
+# select taxa level and control samples
+ctrls <- vagswab_counts %>%
+  # select control samples
+  select(clade_name, any_of(controls_vagswab)) %>%
+  # split calde names into seperate columns:
+  separate(
+    col = clade_name,
+    into = taxonomy,
+    sep = "\\|",
+    fill = "right"
+  ) %>%
+  # filter out only species level taxonomy:
+  filter(!is.na(species)) %>%
+  filter(is.na(strain)) %>%
+  select(species, any_of(controls_vagswab))
+
+# arrange by most abundant taxa
+# and remove lowly abundant taxa across all controls
+ctrls_top <- ctrls %>%
+  mutate(tot_ctrls = rowSums(ctrls[, 2:ncol(.)], na.rm = T)) %>%
+  arrange(-tot_ctrls) %>%
+  filter(tot_ctrls > 0.000001)
+
+# pivot longer and calculate perecentage for the 15 most abundant taxa
+df_ctrls <- ctrls_top %>%
+  select(-tot_ctrls) %>%
+  slice_head(., n = 15) %>%
+  pivot_longer(
+    cols = -species,
+    names_to = "name",
+    values_to = "value"
+  ) %>%
+  mutate_at("value", as.numeric) %>%
+  mutate(across(where(is.numeric), ~ round(., 1)))
+#filter(value>0)
+
+#################################################
+# PLOT TOP 15 TAXA ABUNDANCE OF CONTROL SAMPLES #
+#################################################
+colourCount = length(unique(df_ctrls$species))
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+#plot the ctrls
+ctrls_barplot <- ggplot(
+  df_ctrls,
+  aes(x = name, y = round(value, digits = 3), fill = species)
+) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = value), position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = pal[1:colourCount]) +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90))
+
+plot(ctrls_barplot)
+
+ggsave(
+  filename = "Ctrls_barplot.png",
+  plot = ctrls_barplot,
+  width = 12
+)
+```
