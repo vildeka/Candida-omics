@@ -1,0 +1,569 @@
+---
+title: "Metagenome Normalization and Feature Selection"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html: 
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+      caption: Code
+---
+
+### Load Libraries
+```{r Libraries}
+#| code-fold: true
+#| output: false
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(mixOmics) 
+library(readxl)
+library(cowplot)
+library(RColorBrewer)
+library(scales)
+select <- dplyr::select
+map <- purrr::map
+
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
+
+taxonomy <- c(
+  "kingdom",
+  "phylum",
+  "class",
+  "order",
+  "family",
+  "genus",
+  "species",
+  "strain"
+)
+```
+
+The first part of this script follows the preprocessing steps outlined on the MixOmics tutorial
+https://mixomics.org/mixmc/mixmc-preprocessing/
+
+```{r Load-data}
+data_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/Tidy_data/Metagenomics/Metageonome_all_vagswab_metaphlan.csv"
+meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
+
+#############
+# LOAD DATA #
+#############
+data <- read_csv(data_path) 
+meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1)
+```
+
+```{r group-assignment}
+gr_data <- meta_data %>%
+    rename(`Symptom score (0-5)` = "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren") %>%
+  select(
+    svamp_ID,
+    `Fungal culture: C. albicans (y/n)`,
+    `Fungal culture: Non-albicans candida spp. (y/n)`,
+    `Symptom score (0-5)`,
+    `Recurring fungal infections > 2/year (y/n)`
+  ) %>%
+    mutate(
+  group = case_when(
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Symptom score (0-5)` >= 1 &
+      `Recurring fungal infections > 2/year (y/n)` == "1" ~
+      "RVVCpos",
+
+    `Fungal culture: C. albicans (y/n)` == "0" &
+      `Recurring fungal infections > 2/year (y/n)` == "1" ~
+      "RVVCneg",
+
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Symptom score (0-5)` == 0 ~
+      "AS",
+
+    `Fungal culture: C. albicans (y/n)` == "0" &
+      `Recurring fungal infections > 2/year (y/n)` == "0" ~
+      "Control",
+
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Recurring fungal infections > 2/year (y/n)` == "0" ~
+      "Candidapos",
+
+    TRUE ~ NA_character_
+  )
+) %>%
+  select("svamp_ID", group, everything())
+
+
+```
+
+## Step 2: Pre-filtering
+keep taxa with at least 0.005% in at least 6% (2 out of 34) of samples, or at least 2% relative abundance in at least 1 sample.
+
+```{r filter-taxa}
+# final
+############################
+# IDENTIFY TAXA TO FILTER #
+###########################
+t <- set_names(taxonomy, seq_along(taxonomy))
+data <- data %>%
+    select( -contains("ex"), -contains("seq"), -contains("_run2")) %>% # removes ctrl and extra samples
+    select(-matches("_1W|_3M|_6M")) %>%
+    mutate(
+        level = factor(
+            t[as.character(str_count(clade_name, "\\|") + 1)],
+            levels = taxonomy),
+            .after = "clade_name"
+            ) 
+
+n_samples <- select(data, starts_with("S")) %>% ncol() # number of good samples
+
+# keep taxa with at least 0.005% in at least 6% (5 out of 84) of samples, or at least 2% relative abundance in at least 1 sample.
+
+# Step 1. split clade name into seperate columns
+temp <- data %>%
+    separate(
+    col = clade_name,
+    into = taxonomy,
+    sep = "\\|",
+    #remove = FALSE,
+    fill = "right"
+  ) %>%
+  # keeps any row where at least one numeric column has a value greater than zero
+  filter(if_any(where(is.double), ~ .x > 0))
+
+# Step 2. Identify the strains to remove
+strains_to_remove <- temp %>%
+  filter(level == "strain") %>%
+  filter(
+    !(rowSums(across(where(is.double), ~ .x > 0.005)) >=
+      round(0.06 * n_samples) |
+      rowSums(across(where(is.double), ~ .x >= 2)) >= 1)
+  )
+
+# pander table of strains to remove
+strains_to_remove %>%
+  arrange(desc(rowSums(across(where(is.numeric))))) %>%
+  # removes samples with colsum = zero:
+  select(
+    -where(~ is.numeric(.x) && sum(.x) == 0)
+  ) %>%
+  knitr::kable(., digits = 1)
+
+
+# Step 3. Aggregate removed strains by higher levels
+removed_all_lvls <- strains_to_remove %>%
+  # pivot_longer(cols = where(is.double), names_to = "sample", values_to = "removed_abundance") %>%
+  select(-level) %>%
+  pivot_longer(
+    cols = kingdom:strain,
+    names_to = "level",
+    values_to = "name"
+  ) %>%
+  nest(.by = c(level)) %>%
+  mutate(
+    data = purrr::map(
+      data,
+      ~ summarise(.x, across(where(is.double), ~ sum(.)), .by = c("name"))
+    )
+  ) %>%
+  mutate(data = setNames(.[["data"]], .$level))
+
+removed_all_lvls
+
+knitr::kable(removed_all_lvls$data[[2]], digits = 1)
+
+
+# Step 4. get longer format and add back clade_names
+# function to get clade name
+get_full_clade.fun <- function(df) {
+  # This will add a new column called match_clade
+  # with the full clade_name that ends with the string from tissue_renorm_filt$clade_name
+  df %>%
+    mutate(
+      match_clade = map_chr(
+        name,
+        ~ {
+          hit <- data$clade_name[str_detect(
+            data$clade_name,
+            paste0(.x, "$")
+          )]
+          if (length(hit) > 0) hit[1] else NA_character_
+        }
+      )
+    ) %>%
+    select(match_clade) %>%
+    pull()
+}
+
+removals <- removed_all_lvls %>%
+  unnest(cols = data) %>%
+  mutate(clade_name = get_full_clade.fun(.))
+
+#############################
+# FILTER AT ALL TAXA LEVELS #
+############################
+# Step 5. Subtract from higher levels
+data_filt <- data %>%
+  # Join percentages to be subtracted
+  left_join(
+    select(removals, -name, -level),
+    by = "clade_name",
+    suffix = c("", "_rm")
+  ) %>%
+  # Subtract sample-wise values
+  mutate(
+    across(
+      matches("^S\\d\\d$"),
+      ~ .x - coalesce(get(paste0(cur_column(), "_rm")), 0)
+    )
+  ) %>%
+  select(-ends_with("_rm"))
+
+# --- Step 6: check and replace negatives ---
+indx <- which(data_filt < 0, arr.ind = TRUE)
+
+if (nrow(indx) > 0) {
+  neg_report <- tibble(
+    neg    = map2_dbl(indx[,1], indx[,2], ~ data_filt[[.x, .y]]),
+    remove = map2_dbl(indx[,1], indx[,2], ~ data[[.x, .y]]),  # original value from data
+    col    = map_chr(indx[,2], ~ colnames(data)[.x]),         # column name
+    tax    = map_chr(indx[,1], ~ data[[.x, 1]])               # taxon/clade name
+  )
+  
+  message("Negative values found and replaced with 0:")
+  print(neg_report)
+
+  # --- Step 7: replace negatives with zero ---
+  data_filt <- data_filt %>%
+  mutate(across(where(is.numeric), ~ pmax(.x, 0)))
+}
+
+# test
+strains_to_remove %>% pull("S39") %>% sum(.)
+data_filt %>% filter(level == "genus") %>% pull("S39") %>% sum(.)
+
+#####################################
+# RENORMALIZED FILTERED TAXA VALUES #
+#####################################
+# Step 6. Re-normalize so each sample sums to 100
+data_filt_norm <- data_filt %>%
+  group_by(level) %>%
+  mutate(
+    across(
+      matches("^S\\d\\d$"),
+      ~ .x * 100 / sum(.x, na.rm = TRUE)
+    )
+  ) %>%
+  ungroup()
+
+# test
+data_filt_norm %>% filter(level == "genus") %>% pull("S39") %>% sum(.)
+
+```
+
+### Save filtered table
+```{r save-filtered-table}
+data_filt_norm %>%
+  #select(-Pos_Seq_Ctrl) %>%
+  arrange(level) %>%
+  write_csv(
+    .,
+    "../Results/MixOmic/Metageonome_all_vagswab_metaphlan_taxa_filt.csv"
+  )
+# data_filt_norm <- read_csv("../Results/Tissue_QC/Metageonome_all_vagswab_metaphlan_taxa_filt.csv")
+```
+
+
+## Step 3: Centered Log Ratio (CLR) Transformation
+For technical, biological and computational reasons, microbiome data is compositional such that they represent proportions or relative information. Proportional data are restricted to a space where the sum of all OTU proportions for a given sample sums to 1. Using standard statistical methods on such data may lead to spurious results. Likewise, any data that are compositional in nature are interpreted into relative counts. Hence, using a CLR transformation allows the circumvention of these spurious results.
+
+There are two ways of log-ratio transforming the data in mixOmics:
+
+    Option 1: Some of our functions (pca, plsda) directly include the argument logratio = 'CLR', so all you need to do is include your filtered offset data and add this argument (see example below).
+    Option 2: Some functions currently do not include the logratio argument. In this case, you will need to use the logratio.transfo() function as shown below. You can also use this function if you only have access to TSS (proportions) data and those were not offset.
+
+unlike 16S data which are returned as raw counts after pre-processing, shotgun metageome data is often already normalized into proportions. This is because direct counts aren’t very meaningful across different taxa/genomes. That is why we will go with option 2 for our data.
+
+### 🔹 Shotgun metagenomics
+
+- You sequence **all DNA** in the sample, not just one marker gene.  
+- Reads are mapped to **reference genomes, genes, or functional categories**.  
+- Raw counts can be biased by factors like:
+  - genome size  
+  - gene length  
+  - variable sequencing depth  
+- Because of this, many sequencing facilities preprocess shotgun data to produce **normalized relative abundances (proportions)**, so that samples can be compared more easily.  
+
+**Typical outputs include:**  
+- Relative abundance (%) of taxa  
+- RPKM / TPM / CPM for genes or functions 
+
+```{r get-new-groups}
+gr <- tibble(ID = colnames(data)[-c(1,2)]) %>% 
+    left_join(., gr_data, by =c("ID"="svamp_ID")) %>%
+    mutate(
+      pos = case_when(
+        `Fungal culture: C. albicans (y/n)` == "1" |
+        `Fungal culture: Non-albicans candida spp. (y/n)` == 1 ~
+        "pos",
+        TRUE ~ "neg"
+        ), .after="group")
+```
+
+Now we want to simplify the `clade_name` column so that:
+
+- For **phylum / class / order / family / genus**, only the relevant level is kept.
+- For **species** and **strain**, all levels are incuded down from genus,  
+  i.e. `"Genus species"` or `"Genus species strain"`.
+
+```{r simplify-clade_name}
+# string manipulation
+
+# data_filt_norm <- read_csv("../Results/Tissue_QC/Metageonome_all_vagswab_metaphlan_taxa_filt.csv")
+
+# Modify taxa labels 
+data_filt_norm <- data_filt_norm %>%
+  mutate(
+    taxa = str_extract_all(clade_name, "(?<=k__|p__|c__|o__|f__|g__|s__|t__)[^|]+"),
+    taxa = map2_chr(taxa, level, ~ {
+      if (.y %in% c("species", "strain")) {
+        # keep everything from genus onward
+        start <- which(c("k","p","c","o","f","g","s","t") %in% substr(.y,1,1))
+        paste(.x[start:length(.x)], collapse = " ")
+      } else {
+        # keep only the last element (current level)
+        tail(.x, 1)
+      }
+    }),
+    .after = "level"
+  ) %>%
+  select(-clade_name) %>%
+  rename(clade_name = taxa)
+```
+
+```{r create-matrix}
+# Create matrix for all levels of taxa
+# NB! the majority(?) of mixOmics functions expect a format of
+# samples as rows and features as columns, thus the transformation 
+# is VERY important!
+matrix <- data_filt_norm %>%
+    #rename_with(~ str_replace(.x, "_BL$", ""), everything()) %>%
+    nest(data = -level) %>%
+    # filter(level == "strain") %>%
+    mutate(
+    data = map(
+      data,
+      ~ .x %>%
+        column_to_rownames(var = "clade_name") %>%
+        as.matrix() %>%
+        t()
+    )
+  )
+
+matrix
+
+
+```
+
+```{r normalize}
+# Specify levels you want to process
+tax_levels <- c("order", "family", "genus", "species", "strain")
+
+
+matrix <- matrix %>%
+  # Apply CLR transformation and PCA to each level
+  mutate(
+    clr_data = map(data, ~ logratio.transfo(.x, logratio = "CLR", offset = 1))
+  ) %>%
+    mutate(across(2:3, ~set_names(.x, paste0(.data[["level"]]))))
+
+
+```
+
+```{r save-CLR-transformed-data}
+write_csv(
+  matrix,
+  "../Results/MixOmic/Metageonome_vagswab_CLR_transformed.csv"
+)
+# matrix <- read_csv("../Results/MixOmic/Metageonome_vagswab_CLR_transformed.csv")
+```
+
+```{r plot-PCA}
+matrix <- matrix %>%
+  # Filter matrix to only these levels
+  filter(level %in% tax_levels) %>%
+  
+  # Apply CLR transformation and PCA to each level
+  mutate(
+    #clr_data = map(data, ~ logratio.transfo(.x, logratio = "CLR", offset = 1)),
+    pca_res  = map(clr_data, ~ pca(.x)),
+    plot = map2(pca_res, level, ~plotIndiv(.x, 
+                group = gr$pos, ind.names = F, size.title = 9,
+                title = paste0(.y))),
+    plot2 = map2(pca_res, level, ~plotIndiv(.x, 
+                group = gr$group, ind.names = F, size.title = 9,
+                title = paste0(.y)))
+  ) %>%
+    mutate(across(2:5, ~set_names(.x, paste0(.data[["level"]]))))
+
+# Plot PCA for selected levels
+l <- get_legend(plotIndiv(matrix$pca_res[["genus"]], legend = T, group = gr$pos)$graph)
+l2 <- get_legend(plotIndiv(matrix$pca_res[["genus"]], legend = T, group = gr$group)$graph)
+p <- matrix$plot %>% map("graph")
+p2 <- matrix$plot2 %>% map("graph")
+plot_grid(
+  plotlist = c(list(l),p),
+  #labels = matrix$level,   # use taxonomy levels as labels
+  ncol = 3
+)
+
+plot_grid(
+  plotlist = c(list(l2),p2),
+  #labels = matrix$level,   # use taxonomy levels as labels
+  ncol = 3
+)
+```
+
+
+There are no clear seperation between the labels at any of the taxa levels.
+A google search indicate that Some studies find family or genus level is often most informative.
+Im wondering weather I can combine the matrix for genus and species level and to the PLS-DA on that?
+
+
+Now that the data is:
+
+- filtered for low abundant taxa  
+- CLR transformed  
+- offset added  
+
+Now we can move on to the Feature selection (PLS-DA)
+For this portion of the script we are following the MixOmics tutorial here:
+https://mixomics.org/mixmc/koren-bodysites-case-study/
+
+
+## Feature selection
+We want to do use a Multivariate feature selection method (PLS-DA). 
+Multivariate methods considers features collectively, accounting for their interplay and redundancy, aiming for "more accurate prediction” 
+
+```{r PLS-DA}
+# combined genus and species levels with neg and pos only
+m <- cbind(matrix$clr_data$genus, matrix$clr_data$species)
+g <- gr$pos
+
+# genus only and withouth samples with NA values 
+#m <- matrix$clr_data$genus[!is.na(gr$group),]
+#g <- gr$group[!is.na(gr$group)]
+
+basic.plsda = plsda(m, g, logratio = 'none', 
+                          ncomp = 3)
+
+# assess the performance of the sPLS-DA model using repeated CV
+perf.plsda = perf(basic.plsda,  
+                  validation = 'Mfold', 
+                  folds = 5, nrepeat = 10, 
+                  progressBar = FALSE)
+
+# extract the optimal component number
+optimal.ncomp <- perf.plsda$choice.ncomp["BER", "max.dist"] 
+
+plot(perf.plsda, overlay = 'measure', sd=TRUE) # plot this tuning
+```
+
+### Tuning of the model
+```{r tuning}
+grid.keepX = c(seq(5,150, 5))
+
+tune.splsda = tune.splsda(m, gr$pos, 
+                          ncomp = optimal.ncomp, # use optimal component number
+                          logratio = 'none', # transform data to euclidean space
+                          test.keepX = grid.keepX,
+                          validation = c('Mfold'),
+                          folds = 5, nrepeat = 10, # use repeated CV
+                          dist = 'max.dist', # maximum distance as metric
+                          progressBar = FALSE)
+
+# extract the optimal component number and optimal feature count per component
+optimal.keepX = tune.splsda$choice.keepX[1:2] 
+optimal.ncomp = tune.splsda$choice.ncomp$ncomp 
+
+plot(tune.splsda) # plot this tuning
+```
+
+For each component (coloured according to the legend), the optimal number of features to select is shown by the large diamonds. This is selected per component using a one-sided t-test. The y-axis depicts the average correlation between the predicted and actual components. This is cross-validated over folds folds and repeated nrepeat times.
+
+### optimised model
+```{r optimise}
+splsd.mod = splsda(m, gr$pos, logratio= "none", # form final sPLS-DA model
+                ncomp = 2, 
+                keepX = optimal.keepX)
+
+plotIndiv(splsd.mod,
+          comp = c(1,2),
+          ind.names = FALSE,
+          ellipse = TRUE, # include confidence ellipses
+          legend = TRUE, size.title = 9,
+          legend.title = "Candida",
+          title = 'sPLS-DA Comps 1&2')
+
+
+png("cim_plot.png", width = 2000, height = 2000, res = 300)
+cim(splsd.mod,
+    comp = c(1,2),
+    margins = c(10, 5),
+    row.sideColors = color.mixo(factor(gr$pos)), # row colors by bodysite
+    legend = list(legend = levels(factor(gr$pos))),
+    title = 'Clustered Image Map of Koren Bodysite data')
+dev.off()
+```
+
+
+```{r network-plot}
+#| fig-height: 20
+#| fig-width: 20
+
+plotVar(splsd.mod,
+        comp = c(1,2),
+        cutoff = 0.7, rad.in = 0.7,
+        title = 'Correlation Circle Plot Comps 1&2')
+
+png("network_plot_.png", width = 6.7, height = 6.7, res = 300, units = "in")
+network(splsd.mod,
+        size.node = 0.05, cex.node.name = 0.5,
+        cutoff = 0.1, block.var.names = F, plot.graph = FALSE,
+        color.node = c("orange","lightblue"))
+dev.off()
+```
+
+### evaluate PLS-DA
+
+```{r evaluate}
+# evaluate classification, using repeated CV and maximum distance as metric
+perf.splsda = perf(splsd.mod, validation = 'Mfold', 
+                         folds = 5, nrepeat = 10, 
+                         progressBar = FALSE, dist = 'max.dist') 
+
+perf.splsda$error.rate
+```
+
+### Taxa selection
+
+```{r taxa-selected}
+par( mfrow= c(1,2) )
+p <- map(c(1,2), ~plotLoadings(splsd.mod, comp = .x, 
+             method = 'mean', contrib = 'max',  
+             size.name = 0.8, legend = FALSE, size.title = 1,
+             ndisplay = 20, style = "ggplot2",
+             title = paste0("Loadings of Component ",.x)) )
+
+
+# determine which OTUs were selected
+selected.OTU.comp1 = selectVar(splsd.mod, comp = 1)$name 
+selected.OTU.comp2 = selectVar(splsd.mod, comp = 2)$name 
+
+# display the stability values of these OTUs
+perf.splsda$features$stable[[1]][selected.OTU.comp1] 
+perf.splsda$features$stable[[2]][selected.OTU.comp2] 
+```

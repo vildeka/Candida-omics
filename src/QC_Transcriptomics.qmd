@@ -1,0 +1,573 @@
+---
+title: "Transcriptomics Normalization and Exploration"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html: 
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+      caption: Code
+---
+
+### Load Libraries
+```{r Libraries}
+#| code-fold: true
+#| output: false
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+# BiocManager::install("limma")
+# BiocManager::install("edgeR")
+# BiocManager::install("ComplexHeatmap")
+library(limma)
+library(edgeR)
+
+library(scales)
+library(ComplexHeatmap)
+library(circlize)
+library(mixOmics) 
+library(readxl)
+library(cowplot)
+library(RColorBrewer)
+
+select <- dplyr::select
+map <- purrr::map
+
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
+
+```
+
+## Sample Information
+
+There are only two biopsies collected in the longitudinal study —  
+at **visit 02** and **visit 04**, corresponding to **baseline** and the **3-month follow-up**.
+
+#### Longitudinal Study Setup
+
+#### Visits:
+- **01** – Inclusion  
+- **02** – Secretion + biopsy (**baseline**)  
+- **03** – Secretion only (**1 week post-treatment**)  
+- **04** – Secretion + biopsy (**3 months post-treatment**)  
+- **05** – Secretion only (**6 months post-treatment**)
+
+#### Sequencing Runs
+
+The samples have been run in two sequencing batches:
+
+- **Run 1:** `BEA23P074_23`  
+- **Run 2:** `BEA24P003_28`
+
+#### Sample Summary
+
+Based on the files delivered from BEA, I believe we have sequenced:  
+**81 unique samples**, of which **73 are baseline** and **8 are 3-month follow-up**.
+
+NB! The baseline sample of **(S69)** has `12:01` (DS_ID) listed as baseline instead of `12:02`.
+This was a mistake, but we decided to keep it. 
+
+#### Potential Control Samples
+
+There are six samples that might be **controls**, but this is uncertain.  
+I could not find any documentation explaining their naming:
+
+FF060322243, FF060322244, 231025:1, 230918., 231108:1, 231108:1
+
+```{r Load-data}
+#| code-fold: true
+#| output: false
+#############
+# LOAD DATA #
+#############
+meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
+meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1)
+
+trx_path <- "../Tidy_data/Transcriptomics/Counts_all_trx_samples.csv"
+raw_matrix <- read_csv(trx_path)
+```
+
+## Get group assignment
+```{r group-assignment}
+#| code-fold: true
+gr <- c("0"="ctrl", "1"="ctrl", "2"="int", "3"="int", "4"="C.a", "5"="C.a")
+gr_data <- meta_data %>%
+    rename(`Symptom score (0-5)` = "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren") %>%
+  select(
+    svamp_ID,
+    `Age (years)`,
+    `Clinical score (0-5)`,
+    `Fungal culture: C. albicans (y/n)`,
+    `Fungal culture: Non-albicans candida spp. (y/n)`,
+    `Symptom score (0-5)`,
+    `Recurring fungal infections > 2/year (y/n)`
+  ) %>%
+    mutate(
+  group = case_when(
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Symptom score (0-5)` >= 1 &
+      `Recurring fungal infections > 2/year (y/n)` == "1" ~
+      "RVVCpos",
+
+    `Fungal culture: C. albicans (y/n)` == "0" &
+      `Recurring fungal infections > 2/year (y/n)` == "1" ~
+      "RVVCneg",
+
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Symptom score (0-5)` == 0 ~
+      "AS",
+
+    `Fungal culture: C. albicans (y/n)` == "0" &
+      `Recurring fungal infections > 2/year (y/n)` == "0" ~
+      "Control",
+
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Recurring fungal infections > 2/year (y/n)` == "0" ~
+      "Candidapos",
+
+    TRUE ~ NA_character_
+  )
+) %>%
+  select("svamp_ID", group, everything()) %>%
+  mutate(Clin_gr = gr[.$`Clinical score (0-5)`], .after ="group")
+
+```
+
+### Check the distribution of samples per groups
+```{r group-distribution}
+table(gr_data$`Clinical score (0-5)`)
+table(gr_data$Clin_gr)
+```
+
+## Filter genes
+
+We calculate the mean log2 CPM of each gene to determine what filtering cuttof to use. 
+By looking at the histogram of the mean log2 CPM values you can determine what log2 CPM value would be suitable to use. You want to see a normal distribution of the mean log2 values. In this dataset vi see that there are a higer frequency of genes around log2CPM between 1 and 2 than what you would expect from the normal distribution. Therfore a cuttof at 1.5 seem to be appropriate. this resulted in the removal of 2861 genes. 
+
+```{r get-count-table}
+#| fig-cap: "Figure 1: Histogram of mean log2 CPM expression per gene. The vertical gray dashed line marks 1.5 log2 cpm"
+
+# remove quality controll samples
+# assuming that the NA_1-6 samples are quality ctrls, 
+# we remove them before normalizing and filtering
+countTable <- raw_matrix %>%
+  select(-starts_with("NA")) # %>%
+  #select(-ends_with("_run2"))
+
+# Create matrix countTable 
+countTable <- countTable %>%
+  select(-c(1:6), -entrez) %>%      # remove metadata columns
+  filter(!is.na(symbol)) %>%         # remove rows without a symbol
+  filter(if_any(where(is.numeric), ~ . != 0)) %>%  # remove rows that are all zeros
+  summarise(across(where(is.numeric), \(x) sum(x, na.rm = TRUE)), .by = "symbol") 
+
+# Identify low count cut-off
+meanLog2CPM <- rowMeans(log2(cpm(countTable[,-1]) + 1))
+# hist(meanLog2CPM)
+ggplot() +
+    geom_histogram(aes(meanLog2CPM), 
+      fill = "red", alpha = 0.7, bins = 50) +
+    theme_minimal() +
+    scale_y_continuous(labels = label_comma()) + # <-- commas
+    geom_vline(xintercept = 1.5, color = "gray", linetype = "dashed") +
+    ggtitle("Distribution of Mean log2 CPM") 
+
+# number of genes that will be removed:
+sum(meanLog2CPM <= 1.5) 
+
+# knitr::kable(., digits = 1)
+```
+
+```{r identify-genes-to-remove}
+#| fig-cap: "Figure 2: Histogram of mean log2 CPM expression per gene after removal of low count genes. The vertical gray dashed line marks 1.5 log2 cpm"
+
+
+# keep taxa with at least 0.005% in at least 6% (5 out of 81) of samples, or at least 2% relative abundance in at least 2 sample.
+
+# Step 1. Identify the genes to remove
+
+# Alternative 1.
+# keep taxa with at least 0.005% in at least 6% (5 out of 81) of samples, or at least 2% relative abundance in at least 2 sample.
+# number of uniqe samples excluding "_run2" samples
+n_samples <- select(countTable, matches("^S\\d\\d(?!.*_run2$).*", perl = TRUE)) %>% ncol()
+genes_to_remove_1 <- countTable %>%
+  filter(
+    !(rowSums(across(where(is.double), ~ .x > 0.005)) >=
+      round(0.06 * n_samples) |
+      rowSums(across(where(is.double), ~ .x >= 2)) >= 2)
+  ) %>%
+  arrange(desc(rowSums(across(where(is.numeric))))) 
+
+genes_to_remove_1 %>%
+  mutate(cumulative_sum = rowSums(across(where(is.numeric)))) %>%
+  select(symbol, cumulative_sum)
+
+# Alternative 2.
+genes_to_remove_2 <- countTable %>%
+  mutate(meanLog2CPM = rowMeans(across(where(is.double)))) %>%
+  filter(meanLog2CPM < 1) %>%
+  select(-meanLog2CPM)
+
+genes_to_remove_2 %>%
+  mutate(cumulative_sum = rowSums(across(where(is.numeric)))) %>%
+  select(symbol, cumulative_sum) %>%
+  arrange(desc(cumulative_sum))
+
+length(intersect(genes_to_remove_1, genes_to_remove_2))
+
+```
+
+I think Alternative one is much better at identifying low expressed genes. 
+Alternative 2 is too indesciminant, removing certain genes of intrest. 
+
+```{r filter-genes}
+# Step 3. filter low abundant genes
+countTable_filt <- countTable %>%
+  filter(symbol != genes_to_remove_1$symbol)
+
+
+# Filter low counts
+meanLog2CPM_filt <- rowMeans(log2(cpm(countTable_filt[,-1]) + 1))
+
+# hist(meanLog2CPM_filt, breaks= seq(0,16,length.out = 15))
+ggplot() +
+    geom_histogram(aes(meanLog2CPM_filt), 
+      fill = "red", alpha = 0.7, bins = 50) +
+    theme_minimal() +
+    scale_y_continuous(labels = label_comma()) + # <-- commas
+    geom_vline(xintercept = 1.5, color = "gray", linetype = "dashed") +
+    ggtitle("Distribution of Mean log2 CPM") 
+
+dim(countTable_filt) # nr. of genes x nr. samples after filtering
+```
+
+## Normalize
+
+```{r Normalized-data}
+#| eval: true
+
+# get normalized matrix
+# Create DGElist object to relate counts to groups
+dge <- countTable_filt %>%
+  column_to_rownames(., var = "symbol") %>%
+  DGEList(., 
+          #group = data_meta$Groups,
+          genes = .)
+
+# Normalize counts with TMM and CPM log2
+dge_TMM <- calcNormFactors(dge, method = "TMM")
+cpm_log_TMM <- cpm(dge_TMM, log=T) # for heatmap
+```
+
+```{r save-mormalized-data}
+########################
+# SAVE NORMALIZED DATA #
+########################
+cpm_log_TMM %>%
+  as_tibble(., rownames = "symbol") %>%
+  write_csv(., "../Results/MixOmic/Transcriptomics_Normalized.csv")
+# norm <- read_csv("../Results/MixOmic/Transcriptomics_Normalized.csv")
+```
+
+## compare re-sequenced samples
+
+```{r compare-re-sequenced-samples}
+#| fig-width: 10
+#| fig-height: 8
+#| fig-cap: "Figure 3: Comparison of technical replicates across sequencing runs. Scatterplots show log₂-transformed CPM values for the same biological samples sequenced in two independent sequencing runs. Each point represents one gene. The dashed red line indicates the 1:1 relationship expected for perfect agreement between runs. Overall, the replicate samples display high concordance, confirming that technical variation between sequencing runs is minimal relative to biological signal.  Pearson and Spearman correlation coefficients were calculated for each sample pair and are summarized in the accompanying table."
+#| code-fold: false
+#| eval: true
+
+#############################
+# PLOT RE-SEQUENCED SAMPLES #
+#############################
+n <- names(select(countTable, contains("_run2")))
+samp <- str_remove(n, "_run2")
+n <- c(n, samp) # samples sequenced twice
+
+# Create a tidy summary comparing all pairs
+pair_summary <- map_dfr(samp, function(samp) {
+  run1 <- cpm_log_TMM[, samp, drop = TRUE]
+  run2 <- cpm_log_TMM[, paste0(samp, "_run2"), drop = TRUE]
+
+  tibble(
+    sample = samp,
+    pearson = cor(run1, run2, method = "pearson"),
+    spearman = cor(run1, run2, method = "spearman"),
+    mean_diff = mean(run1 - run2),
+    sd_diff = sd(run1 - run2)
+  )
+})
+
+pair_summary
+
+# generate one plot per pair
+air_plots <- map(samp, function(samp) {
+  df <- tibble(
+    gene = rownames(cpm_log_TMM),
+    run1 = cpm_log_TMM[, samp],
+    run2 = cpm_log_TMM[, paste0(samp, "_run2")]
+  )
+  
+  ggplot(df, aes(x = run1, y = run2)) +
+    geom_point(alpha = 0.3) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    labs(title = paste("Comparison:", samp), x = "Run1 log2-CPM", y = "Run2 log2-CPM") +
+    theme_minimal()
+}) %>%
+  set_names(samp)
+
+cowplot::plot_grid(plotlist = air_plots, ncol = 2)
+```
+
+
+```{r filter-samples}
+countTable_final <- countTable_filt %>%
+  # remove samples sequenced twice
+  select(-ends_with("_run2")) %>%
+  # remove controll samples
+  select(-starts_with("NA"))
+
+```
+
+
+## DGE analysis
+
+```{r functions}
+##################
+# DEG's FUNCTION #
+##################
+# df <- meta_trx
+# sample_df <- gr_data
+# group <- "Clin_gr"
+
+edgR_dge.fun <- function(CountMatrix, group, sample_df, confound = NULL) {
+  
+  #groups <- sample_df[, group]
+  groups <- pull(sample_df, group)
+  n_gr <- length(na.omit(unique(groups)))
+  
+  if(any(is.na(groups))) {
+    groups <- tidyr::replace_na(groups, "X")
+  }
+
+  if(!is.null(confound)) {
+    c <- "_conf"
+    design <- design
+  }else{
+    c <- "_no_conf"
+    design <- model.matrix(~groups, data=sample_df) # without confounders
+  }
+  
+  colnames(design) <- sub(group,"",colnames(design))
+  colnames(design) <- sub("\\(Intercept\\)","Intercept",colnames(design))
+  colnames(design) <- sub(" ","_",colnames(design))
+  
+  y <- DGEList(counts=CountMatrix, remove.zeros = T)
+  y <- calcNormFactors(y,method = "TMM")
+  y <- estimateGLMCommonDisp(y,design)
+  y <- estimateGLMTagwiseDisp(y,design)
+  fit <- glmFit(y, design)
+  
+  lrt <- glmLRT(fit,coef=2:n_gr) # with intercept
+  top <- topTags(lrt,adjust.method = "BH",n = "all",sort.by = "p.value")[[1]]
+  colnames(top) <- sub(group,"",colnames(top))
+  top <- cbind(LogFC.intercept=0,top) # with intercept
+  top <-  rownames_to_column(top, var = "Genes")
+  
+return(list(design=design, y=y, fit=fit, lrt=lrt, top=top, c=c))
+}
+```
+
+```{r dge-analysis}
+# Check consitency between group info and samples
+samples <- colnames(countTable_final)
+intersect(samples, gr_data$svamp_ID)
+setdiff(samples, gr_data$svamp_ID)
+
+gr <- c("ctrl", "int", "C.a", "X")
+
+gr_data <- gr_data %>%
+  filter(svamp_ID %in% samples) %>%
+  rename(Cross_group="group") %>%
+  mutate(Clin_gr = factor(.$"Clin_gr", levels = gr))
+
+# nesscary only if you want to add confounders
+design <- model.matrix(~Clin_gr+`Age (years)`,
+                         data=gr_data)
+
+dge <- column_to_rownames(countTable_final, var = "symbol") %>%
+  edgR_dge.fun(., "Clin_gr", gr_data, confound=NULL)
+```
+
+## Plot heatmap
+
+```{r get-matrix}
+###############
+# GET MATRIX #
+###############
+# get DEGs
+DEGs <- dge$top %>%
+  as_tibble(.) %>%
+  mutate(Regulation = 
+        ifelse(logFC.groupsC.a > 0 & FDR < 0.05, "UP",
+          ifelse(logFC.groupsC.a < 0 & FDR < 0.05,"DOWN", "NOT SIG."))) %>%
+  filter(Regulation == "UP" | Regulation == "DOWN") %>%
+  dplyr::select(Genes, logFC.groupsC.a) %>%
+  arrange(logFC.groupsC.a)
+
+# get filter genes from normalized matrix
+deg_matrix <- cpm_log_TMM[DEGs$Genes, gr_data$svamp_ID]
+
+```
+
+
+```{r z-scores}
+# z-scores
+# to scale the expression of our genes, we have to
+# first transpose our matrix, then scale, then transpose it back:
+zscore <- t(apply(deg_matrix, 1,function(i){scale(i, center = T, scale =T)}))
+colnames(zscore) <- colnames(deg_matrix)
+
+# tidyverse way:
+# zscore <- cpm_log_TMM %>%
+#   as_tibble(rownames = "symbol") %>% 
+#   rowwise() %>%
+#   mutate(across(-symbol, ~ as.numeric(scale(.x, center = TRUE, scale = TRUE)))) %>%
+#   ungroup() %>%
+#   column_to_rownames("symbol")
+
+```
+
+```{r heatmap-annotation}
+##############
+# ANNOTATION #
+##############
+# colour pallets
+blue <- brewer.pal(6, name = "Blues") %>% c(., "gray") 
+Red <- brewer.pal(6, name = "Reds") %>% c(., "gray") 
+pal <- c("#f26386",  "#a4d984", "#fbbc52") # "#f588af", "#fd814e" 
+pal2 <- c("#2266ac", "#91c5de")
+
+# group information
+annot_col <- gr_data %>%
+  select(-`Age (years)`)
+
+# check samples number
+dim(zscore)
+dim(annot_col)
+
+# top annotation object:
+top_annot <- columnAnnotation(
+  Groups = annot_col$Clin_gr,
+  Clin = annot_col$`Clinical score (0-5)`,
+  Culture = annot_col$`Fungal culture: C. albicans (y/n)`,
+  #show_legend = FALSE,
+  show_annotation_name = T,
+  annotation_name_gp = gpar(fontsize = 8),
+  annotation_legend_param = list(
+    grid_height = unit(.1, "mm"), 
+    grid_width = unit(2, "mm"), 
+    title = "", labels_gp = gpar(fontsize = 7), 
+    title_gp = gpar(fontsize = 8)),
+  simple_anno_size = unit(.3, "cm"),
+  #gap = unit(1, "cm"),
+  col=list( Clin=set_names(Red, sort(unique(annot_col$`Clinical score (0-5)`))),
+            Groups=set_names(pal, sort(unique(annot_col$Clin_gr))),
+            Culture=set_names(pal2, sort(unique(annot_col$`Fungal culture: C. albicans (y/n)`)))) 
+            )
+```
+
+```{r heatmap-color-scale}
+#| fig-cap: "Figure 3: Histogram showing the distribution of z-score normalized matrix values"
+################
+# PLOT HEATMAP #
+################
+# colour mapping
+breaks.fun <- function(min, max, n){
+  x <- seq(min, max, length.out = n)
+  x[which(x == median(x))] <- 0
+  round(x)
+  return(x)}
+
+# to better know what values to use for the legend
+# we plot the distribution of values 
+# Convert to a data frame for ggplot
+df <- data.frame(value = as.vector(zscore))
+
+# Basic ggplot histogram
+ggplot(df, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "skyblue", color = "white") +
+  scale_x_continuous(breaks = scales::breaks_pretty(n = 20)) +
+  scale_y_continuous(labels = label_comma()) + # <-- commas
+  labs(
+    title = "Distribution of Matrix Values",
+    x = "Matrix Values",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 14)
+
+# plot to better see the outlier values
+ggplot(df, aes(x = value)) +
+  geom_histogram(bins = 30, fill = "skyblue", color = "white") +
+  scale_x_continuous(breaks = scales::breaks_pretty(n = 20)) +
+  labs(
+    title = "Distribution of Matrix Values",
+    x = "Matrix Values",
+    y = "Count"
+  ) + ylim(0,5000) +
+  theme_minimal(base_size = 14)
+
+# set limits for colourpallet
+RdBu = c("#364B9A", "#4A7BB7", "#6EA6CD", "#98CAE1", "#C2E4EF", "white", "#FEDA8B", "#FDB366", "#F67E4B", "#DD3D2D", "#A50026")
+
+# using min and max from the zscore matrix can work, but is usualy influenced too much 
+# from the min and max values which tend to be outliers
+col <- colorRamp2(breaks.fun(min(zscore), max(zscore), 7), colorRampPalette(c(RdBu))(7))
+
+# instead we use the historgram to determine the min and max values of the scale
+# values larger than 5 are all mapped to dark red and values less than -5 are all mapped to dark blue.
+col <- colorRamp2(breaks.fun(-5, 5, 7), colorRampPalette(c(RdBu))(7))
+```
+
+based on these histograms we can set the scale max and min breaks at 5
+
+```{r plot-heatmap}
+#| fig-width: 10
+#| fig-height: 7
+#| fig-cap: "Figure 5: Hierarchial clustering of differentially expressed genes. Heatmap of all 7,983 DEGs (FDR-adjusted p value <0.05) between the Clinical score values 5 and 4 (n = 14) and Clinical score values 0 and 1 CTRL (n = 108) group. Each study participant is represented by a vertical column and each gene is represented by a horizontal row. The expression of each gene is standardized (z) to a mean of 0 and a standard deviation of 1."
+
+################
+# PLOT HEATMAP #
+################
+# Heatmap global options:
+ht_opt$COLUMN_ANNO_PADDING = unit(.05, "cm")
+ht_opt$HEATMAP_LEGEND_PADDING = unit(-0, "cm") #unit(c(0, 0, 0, -1), "cm") #b,l,t,r
+ht_opt$TITLE_PADDING = unit(.05, "cm")
+ht_opt$DIMNAME_PADDING = unit(.05, "cm")
+
+# average expression:
+H <- Heatmap(zscore,
+             col = col, 
+             cluster_columns = TRUE,
+             show_row_dend = FALSE,
+             name="Gene  \nExpression (z)", 
+             show_row_names = FALSE, 
+             show_column_names = TRUE, 
+             column_names_gp = grid::gpar(fontsize = 8),
+
+            # annotation
+             # right_annotation = right_anno_row, left_annotation = left_anno_row,
+             top_annotation = top_annot
+                                          ) 
+
+pdf(file = "./Heatmap_gene_expression.pdf", width = 10, height = 7)
+H
+dev.off()
+H
+```

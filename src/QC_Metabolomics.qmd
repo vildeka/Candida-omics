@@ -1,0 +1,238 @@
+---
+title: "Metabolomics QC and Normalization"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html: 
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+      caption: Code
+---
+
+### Load Libraries
+```{r Libraries}
+#| code-fold: true
+#| output: false
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(readxl)
+
+# BiocManager::install("limma")
+library(limma)
+library(mixOmics) 
+library(edgeR)
+
+library(cowplot)
+library(RColorBrewer)
+library(scales)
+select <- dplyr::select
+map <- purrr::map
+
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
+#################
+# COLOUR PALLET #
+#################
+pal <- c("#902267", "#ffa998", "#f588af") # #e05e85
+
+```
+
+This is a good ressource to read about PLS-DA
+https://divingintogeneticsandgenomics.com/post/partial-least-square-regression-for-marker-gene-identification-in-scrnaseq-data/
+
+## Overview: 
+#### Feature Selection Workflow for Multi-Omics Integration
+
+1. **Data QC & Preprocessing (per omics)**  
+   Clean, normalize, and scale each omics dataset independently.
+
+2. **Exploratory Supervised Check with PLS-DA (optional)**  
+   Use PLS-DA to confirm that class separation exists before applying sparsity.
+
+3. **Tune Sparse Model Parameters with `tune.splsda()`**  
+   Identify the optimal number of components (`ncomp`) and variables to select per component (`keepX`) via cross-validation.
+
+4. **Fit Final sPLS-DA Model**  
+   Build the sPLS-DA model using the tuned parameters.
+
+5. **Assess Model Performance & Stability with `perf()`**  
+   Evaluate classification accuracy, balanced error rate (BER), and stability of selected variables.
+
+6. **Extract Selected Features (per component and per omics)**  
+   Retrieve the most discriminant variables identified by the sPLS-DA model.
+
+7. **Save Feature Lists for Downstream Multi-Omics Integration**  
+   Use the selected features as input for integration frameworks such as **DIABLO** (`block.splsda()`).
+
+
+## 1. Data QC & Preprocessing
+
+```{r Load-data}
+#| code-fold: true
+#| output: false
+#############
+# LOAD DATA #
+#############
+meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
+meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1)
+
+matrix_data <- read_csv("../Tidy_data/Metabolomics/Metabolom_matrix.csv")
+metadata <- read_csv("../Tidy_data/Metabolomics/metabolomics_metadata.csv")
+annotation_table <- read_csv("../Tidy_data/Metabolomics/metabolomics_annotation.csv")
+```
+
+### Cleaning up data
+The metabolomic data was provided in a unformatted table, so compiling the data into appropriate format is required. Differences in sample number, metabolite nomenclature, etc.
+```{r Paulos-code}
+#| code-fold: true
+#| eval: false
+RAW <- as.data.frame(RAW)
+head(colnames(RAW),30); head(RAW[,1],30)
+
+# EXTRACT INFO
+N <- grep("order",colnames(RAW)); M <- grep("1",RAW[,1])[1]-1
+md <- RAW[(M+1):nrow(RAW),1:N]
+an <- RAW[1:M,(N+1):ncol(RAW)]
+M <- RAW[(M+1):nrow(RAW),(N+1):ncol(RAW)]
+
+# HARMONIZE COMPOUND ANNOTATIONS
+an <- rbind(an,colnames(an))
+colnames(an) <- gsub(",",".",paste0("GCMS-",signif(as.numeric(an[6,],2)),"@",
+    signif(as.numeric(an[5,],2))))
+ann <- t(rbind(name=an[17,], HMDB=an[2,], KEGG=an[3,], PUBCHEM=an[4,], 
+    Mz=an[6,], Rt = an[5,] , row.names = colnames(an) ))
+colnames(an) <- an[17,]
+
+# HARMONIZE SAMPLE NAMES
+colnames(M) <- colnames(an)
+rownames(md) <- md[,"svamp_ID"]
+rownames(M) <- md[,"svamp_ID"]
+
+# CONVERT TO MATRIX
+M <- t(matrix(as.numeric(as.matrix(M)),nrow(M),ncol(M),dimnames = dimnames(M)))
+
+# INCORPORATE EXTRA METADATA
+pmd <- as.data.frame(readxl::read_excel("../data/metabolomics/svamp_ID_list.xlsx"))
+md <- cbind(md, pmd[match(md$svamp_ID,md$svamp_ID),c("group_cross","group_longitudinal", "spatial_code")])
+md[is.na(md)] <- ""
+
+# SAVE OUTPUT
+write.csv(M, "../results/metabolomics_matrix.csv", row.names=T)
+write.csv(md, "../results/metabolomics_metadata.csv", row.names=T)
+write.csv(ann, "../results/metabolomics_annotation.csv", row.names=T)
+```
+
+We start by removing reference compunds and quality controll samples, 
+before log10 and quantile normalising
+
+### Filter samples
+```{r filter-samples}
+###############
+# FILTER DATA #
+###############
+data <- matrix_data %>%
+  # remove reference compunds
+  filter(!grepl("Standard",.$Compund)) %>%
+  # remove controll samples
+  select(-starts_with("QC"))
+
+# transforme to matrix
+matrix <- data %>%
+  column_to_rownames(var = "Compund") %>%
+  as.matrix(.) 
+
+```
+
+### Normalize
+```{r Normalize-data}
+# Normalize data
+##################
+# NORMALIZE DATA #
+##################
+# samples should be columns and features rows
+norm <- normalizeQuantiles(log1p(matrix))
+
+# Transpose for mixOmic analysis
+matrix.t <- matrix %>%
+  t()
+
+matrix.t[1:5,1:4]
+```
+
+NB! the majority(?) of mixOmics functions expect a format of
+samples as rows and features as columns, thus the transformation is VERY important!
+
+```{r save-mormalized-data}
+########################
+# SAVE NORMALIZED DATA #
+########################
+norm %>% as_tibble(., rownames = "svamp_ID") %>%
+  write_csv(., "../Results/MixOmic/Metabolom_Normalized.csv")
+# norm <- read_csv("../Results/MixOmic/Metabolom_Normalized.csv")
+```
+
+### Get group assignment
+```{r group-assignment}
+gr <- c("0"="ctrl", "1"="ctrl", "2"="int", "3"="int", "4"="C.a", "5"="C.a")
+
+gr_data <- meta_data %>%
+    rename(`Symptom score (0-5)` = "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren") %>%
+  select(
+    svamp_ID,
+    `Clinical score (0-5)`,
+    `Fungal culture: C. albicans (y/n)`,
+    `Fungal culture: Non-albicans candida spp. (y/n)`,
+    `Symptom score (0-5)`,
+    `Recurring fungal infections > 2/year (y/n)`
+  ) %>%
+    mutate(
+  group = case_when(
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Symptom score (0-5)` >= 1 &
+      `Recurring fungal infections > 2/year (y/n)` == "1" ~
+      "RVVCpos",
+
+    `Fungal culture: C. albicans (y/n)` == "0" &
+      `Recurring fungal infections > 2/year (y/n)` == "1" ~
+      "RVVCneg",
+
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Symptom score (0-5)` == 0 ~
+      "AS",
+
+    `Fungal culture: C. albicans (y/n)` == "0" &
+      `Recurring fungal infections > 2/year (y/n)` == "0" ~
+      "Control",
+
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Recurring fungal infections > 2/year (y/n)` == "0" ~
+      "Candidapos",
+
+    TRUE ~ NA_character_
+  )
+) %>%
+  select("svamp_ID", group, everything())
+
+
+```
+
+```{r get-new-groups}
+gr <- tibble(ID = colnames(data)[-c(1)]) %>% 
+    left_join(., gr_data, by =c("ID"="svamp_ID")) %>%
+    mutate(
+      pos = case_when(
+        `Fungal culture: C. albicans (y/n)` == "1" |
+        `Fungal culture: Non-albicans candida spp. (y/n)` == 1 ~
+        "pos",
+        TRUE ~ "neg"
+        ), .after="group") %>%
+    mutate(Clin_gr = gr[.$`Clinical score (0-5)`], .after ="group") %>%
+    filter(!(is.na(.$Clin_gr)))
+
+```
