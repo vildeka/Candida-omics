@@ -29,12 +29,18 @@ This repository will bring together multiple omics layers generated from the sam
 
 ## Analysis
 
-### QC and Normalization
+### Quality Control and Normalization
 
 0. [QC-Tissue-Metagenome](https://vildeka.github.io/Candida-omics/Metagenome_tissue_QC_analysis)
-2. [QC-Luminal-Metagenome](https://vildeka.github.io/Candida-omics/QC_Luminal_Metagenomics)
-3. [QC-Metabolome](https://vildeka.github.io/Candida-omics/QC_Metabolomics)
+1. [QC-Luminal-Metagenome](https://vildeka.github.io/Candida-omics/QC_Luminal_Metagenomics)
+2. [QC-Metabolome](https://vildeka.github.io/Candida-omics/QC_Metabolomics)
 3. [QC-Transcriptome](https://vildeka.github.io/Candida-omics/QC_Transcriptomics)
+
+### PCA and Feature Selection
+1. [FS-Luminal-Metagenome](https://vildeka.github.io/Candida-omics/Feature_selection_Metagenomics)
+2. [FS-Metabolome](https://vildeka.github.io/Candida-omics/Feature_Selection_Metabolomics)
+3. [FS-Transcriptome](https://vildeka.github.io/Candida-omics/Feature_selection_Transcriptomics)
+
 *(More analysis pipelines and results will be added as the project progresses.)*
 
 ---
