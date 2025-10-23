@@ -21,14 +21,14 @@ format:
    Load data and meta data and filter out any QC samples.
 
 2. **Step 2: Taxonomical-filtering**  
-   Identify treshold for low abundant taxa to filter
-   Step 1. Split clade name into seperate columns
-   Step 2. Identify the strains to remove
-   Step 3. Aggregate removed strains by higher levels
-   Step 4. Get longer format and add back clade_names
-   Step 5. Subtract filtered taxa from each higher taxa levels
-   Step 6: Re-normalize each sample to 100%
-   Step 7: Check and replace negative values with zero
+   Identify treshold for low abundant taxa to filter<br>
+   Step 1. Split clade name into seperate columns<br>
+   Step 2. Identify the strains to remove<br>
+   Step 3. Aggregate removed strains by higher levels<br>
+   Step 4. Get longer format and add back clade_names<br>
+   Step 5. Subtract filtered taxa from each higher taxa levels<br>
+   Step 6: Re-normalize each sample to 100%<br>
+   Step 7: Check and replace negative values with zero<br>
 
 3. **Step 3: Simplify clade names**  
 
@@ -417,6 +417,8 @@ write_csv(
 )
 # matrix <- read_csv("../Results/MixOmic/Metageonome_vagswab_CLR_transformed.csv")
 ```
+
+## Step 5: Exploratory Unsupervised PCA
 
 ```{r get-new-groups}
 g <- c("0"="0-1", "1"="0-1", "2"="2-3", "3"="2-3", "4"="4-5", "5"="4-5")

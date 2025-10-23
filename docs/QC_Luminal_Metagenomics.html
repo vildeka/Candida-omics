@@ -2614,6 +2614,7 @@ vertical-align: -.125em;
   <li><a href="#step-3-centered-log-ratio-clr-transformation" id="toc-step-3-centered-log-ratio-clr-transformation" class="nav-link" data-scroll-target="#step-3-centered-log-ratio-clr-transformation">Step 3: Centered Log Ratio (CLR) Transformation</a></li>
   <li><a href="#step-3-simplify-clade-names" id="toc-step-3-simplify-clade-names" class="nav-link" data-scroll-target="#step-3-simplify-clade-names">Step 3: Simplify clade names</a></li>
   <li><a href="#step-4-centered-log-ratio-clr-transformation" id="toc-step-4-centered-log-ratio-clr-transformation" class="nav-link" data-scroll-target="#step-4-centered-log-ratio-clr-transformation">Step 4: Centered Log Ratio (CLR) Transformation</a></li>
+  <li><a href="#step-5-exploratory-unsupervised-pca" id="toc-step-5-exploratory-unsupervised-pca" class="nav-link" data-scroll-target="#step-5-exploratory-unsupervised-pca">Step 5: Exploratory Unsupervised PCA</a></li>
   <li><a href="#step-6-exploratory-heatmap" id="toc-step-6-exploratory-heatmap" class="nav-link" data-scroll-target="#step-6-exploratory-heatmap">Step 6: Exploratory Heatmap</a></li>
   </ul>
 </nav>
@@ -2651,7 +2652,7 @@ vertical-align: -.125em;
 <li><p><strong>Step 1: Load data and meta data</strong><br>
 Load data and meta data and filter out any QC samples.</p></li>
 <li><p><strong>Step 2: Taxonomical-filtering</strong><br>
-Identify treshold for low abundant taxa to filter Step 1. Split clade name into seperate columns Step 2. Identify the strains to remove Step 3. Aggregate removed strains by higher levels Step 4. Get longer format and add back clade_names Step 5. Subtract filtered taxa from each higher taxa levels Step 6: Re-normalize each sample to 100% Step 7: Check and replace negative values with zero</p></li>
+Identify treshold for low abundant taxa to filter<br> Step 1. Split clade name into seperate columns<br> Step 2. Identify the strains to remove<br> Step 3. Aggregate removed strains by higher levels<br> Step 4. Get longer format and add back clade_names<br> Step 5. Subtract filtered taxa from each higher taxa levels<br> Step 6: Re-normalize each sample to 100%<br> Step 7: Check and replace negative values with zero<br></p></li>
 <li><p><strong>Step 3: Simplify clade names</strong></p></li>
 <li><p><strong>Step 4: Centered Log Ratio (CLR) Transformation</strong></p></li>
 <li><p><strong>Step 5: Exploratory Unsupervised PCA</strong></p></li>
@@ -14352,6 +14353,9 @@ i.e. <code>&quot;Genus species&quot;</code> or <code>&quot;Genus species strain
 <span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a><span class="co"># matrix &lt;- read_csv(&quot;../Results/MixOmic/Metageonome_vagswab_CLR_transformed.csv&quot;)</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
+</section>
+<section id="step-5-exploratory-unsupervised-pca" class="level2">
+<h2 class="anchored" data-anchor-id="step-5-exploratory-unsupervised-pca">Step 5: Exploratory Unsupervised PCA</h2>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb27"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>g <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">&quot;0&quot;</span><span class="ot">=</span><span class="st">&quot;0-1&quot;</span>, <span class="st">&quot;1&quot;</span><span class="ot">=</span><span class="st">&quot;0-1&quot;</span>, <span class="st">&quot;2&quot;</span><span class="ot">=</span><span class="st">&quot;2-3&quot;</span>, <span class="st">&quot;3&quot;</span><span class="ot">=</span><span class="st">&quot;2-3&quot;</span>, <span class="st">&quot;4&quot;</span><span class="ot">=</span><span class="st">&quot;4-5&quot;</span>, <span class="st">&quot;5&quot;</span><span class="ot">=</span><span class="st">&quot;4-5&quot;</span>)</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>gr <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">ID =</span> <span class="fu">colnames</span>(data)[<span class="sc">-</span><span class="fu">c</span>(<span class="dv">1</span>,<span class="dv">2</span>)]) <span class="sc">%&gt;%</span> </span>
@@ -14865,14 +14869,14 @@ format:
    Load data and meta data and filter out any QC samples.
 
 2. **Step 2: Taxonomical-filtering**  
-   Identify treshold for low abundant taxa to filter
-   Step 1. Split clade name into seperate columns
-   Step 2. Identify the strains to remove
-   Step 3. Aggregate removed strains by higher levels
-   Step 4. Get longer format and add back clade_names
-   Step 5. Subtract filtered taxa from each higher taxa levels
-   Step 6: Re-normalize each sample to 100%
-   Step 7: Check and replace negative values with zero
+   Identify treshold for low abundant taxa to filter&lt;br&gt;
+   Step 1. Split clade name into seperate columns&lt;br&gt;
+   Step 2. Identify the strains to remove&lt;br&gt;
+   Step 3. Aggregate removed strains by higher levels&lt;br&gt;
+   Step 4. Get longer format and add back clade_names&lt;br&gt;
+   Step 5. Subtract filtered taxa from each higher taxa levels&lt;br&gt;
+   Step 6: Re-normalize each sample to 100%&lt;br&gt;
+   Step 7: Check and replace negative values with zero&lt;br&gt;
 
 3. **Step 3: Simplify clade names**  
 
@@ -15261,6 +15265,8 @@ write_csv(
 )
 # matrix &lt;- read_csv(&quot;../Results/MixOmic/Metageonome_vagswab_CLR_transformed.csv&quot;)
 ```
+
+## Step 5: Exploratory Unsupervised PCA
 
 ```{r get-new-groups}
 g &lt;- c(&quot;0&quot;=&quot;0-1&quot;, &quot;1&quot;=&quot;0-1&quot;, &quot;2&quot;=&quot;2-3&quot;, &quot;3&quot;=&quot;2-3&quot;, &quot;4&quot;=&quot;4-5&quot;, &quot;5&quot;=&quot;4-5&quot;)
