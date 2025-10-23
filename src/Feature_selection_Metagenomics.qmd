@@ -1,0 +1,668 @@
+---
+title: "Luminal Metagenomics Feature Selection"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html: 
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+      caption: Code
+---
+
+### Load Libraries
+```{r Libraries}
+#| code-fold: true
+#| output: false
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(readxl)
+
+# BiocManager::install("limma")
+library(limma)
+library(mixOmics) 
+library(edgeR)
+
+library(cowplot)
+library(RColorBrewer)
+library(scales)
+select <- dplyr::select
+map <- purrr::map
+
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
+#################
+# COLOUR PALLET #
+#################
+pal <- c("#902267", "#ffa998", "#f588af") # #e05e85
+```
+
+This is a good ressource to read about PLS-DA
+https://divingintogeneticsandgenomics.com/post/partial-least-square-regression-for-marker-gene-identification-in-scrnaseq-data/
+
+## Overview: 
+#### Feature Selection Workflow for Multi-Omics Integration
+
+1. **Load already QC and normalized data**  
+   Clean, normalize, and scale each omics dataset independently.
+
+2. **Exploratory Supervised Check with PLS-DA (optional)**  
+   Use PLS-DA to confirm that class separation exists before applying sparsity.
+
+3. **Tune Sparse Model Parameters with `tune.splsda()`**  
+   Identify the optimal number of components (`ncomp`) and variables to select per component (`keepX`) via cross-validation.
+
+4. **Fit Final sPLS-DA Model**  
+   Build the sPLS-DA model using the tuned parameters.
+
+5. **Assess Model Performance & Stability with `perf()`**  
+   Evaluate classification accuracy, balanced error rate (BER), and stability of selected variables.
+
+6. **Extract Selected Features (per component and per omics)**  
+   Retrieve the most discriminant variables identified by the sPLS-DA model.
+
+7. **Save Feature Lists for Downstream Multi-Omics Integration**  
+   Use the selected features as input for integration frameworks such as **DIABLO** (`block.splsda()`).
+
+
+## 1. Load already QC and normalized data
+
+```{r Load-data}
+#| code-fold: true
+#| output: false
+#############
+# LOAD DATA #
+#############
+meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
+meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1)
+
+# load taxa filtered and CLR normalized data
+matrix_data <- readRDS("../Results/MixOmic/Metageonome_vagswab_CLR_transformed.RDS")
+```
+
+
+### Get group assignment
+```{r group-assignment}
+gr <- c("0"="0-1", "1"="0-1", "2"="2-3", "3"="2-3", "4"="4-5", "5"="4-5")
+
+gr_data <- meta_data %>%
+    rename(`Symptom score (0-5)` = "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren") %>%
+  select(
+    svamp_ID,
+    `Clinical score (0-5)`,
+    `Fungal culture: C. albicans (y/n)`,
+    `Fungal culture: Non-albicans candida spp. (y/n)`,
+    `Symptom score (0-5)`,
+    `Recurring fungal infections > 2/year (y/n)`
+  ) %>%
+    mutate(
+  group = case_when(
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Symptom score (0-5)` >= 1 &
+      `Recurring fungal infections > 2/year (y/n)` == "1" ~
+      "RVVCpos",
+
+    `Fungal culture: C. albicans (y/n)` == "0" &
+      `Recurring fungal infections > 2/year (y/n)` == "1" ~
+      "RVVCneg",
+
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Symptom score (0-5)` == 0 ~
+      "AS",
+
+    `Fungal culture: C. albicans (y/n)` == "0" &
+      `Recurring fungal infections > 2/year (y/n)` == "0" ~
+      "Control",
+
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Recurring fungal infections > 2/year (y/n)` == "0" ~
+      "Candidapos",
+
+    TRUE ~ NA_character_
+  )
+) %>%
+  select("svamp_ID", group, everything())
+
+
+```
+
+```{r get-new-groups}
+samples <- rownames(matrix_data$data$genus)
+
+gr <- tibble(ID = samples) %>% 
+    left_join(., gr_data, by =c("ID"="svamp_ID")) %>%
+    mutate(
+      pos = case_when(
+        `Fungal culture: C. albicans (y/n)` == "1" |
+        `Fungal culture: Non-albicans candida spp. (y/n)` == 1 ~
+        "pos",
+        TRUE ~ "neg"
+        ), .after="group") %>%
+    mutate(Clin_gr = gr[.$`Clinical score (0-5)`], .after ="group") %>%
+    filter(!(is.na(.$Clin_gr)))
+
+```
+
+### Check the distribution of samples per groups
+```{r group-distribution}
+table(gr$`Clinical score (0-5)`)
+table(gr$Clin_gr)
+```
+ 
+### Remove samples with missing Clinical scores
+```{r filter-samples-again}
+# k__Eukaryota|p__Ascomycota|c__Saccharomycetes|o__Saccharomycetales|f__Debaryomycetaceae|g__Candida|s__Candida_albicans
+reg <- c("kingdom"="","phylum"="Ascomycota", "class"="Saccharomycetes", "order"="Saccharomycetales", "family"="Debaryomycetaceae", "genus"="Candida", "species"="Candida_albicans|Candida_parapsilosis|Candida_dubliniensis", "strain"= "Candida_albicans EUK5476|Candida_parapsilosis EUK5480|Candida_dubliniensis EUK42374")
+
+matrix <- matrix_data %>%
+  mutate(across(2:3, ~map(., ~.x[gr$ID,]))) %>%
+  # remove candida albicans/fungus 
+  mutate(across(3, ~imap(., ~.x[, !grepl(reg[.y], colnames(.x)), drop = FALSE])))
+
+# samples as rows and features as columns
+dim(matrix$data$genus)
+```
+
+## 2. Exploratory Supervised Check with PLS-DA
+### Principal Component Analysis
+```{r PCA}
+#| fig-cap: " Figure 1: Preliminary (unsupervised) analysis with PCA on the candida vaginal swab data. Samples are projected into the space spanned by the principal components 1 and 2. The culture positive samples are not clustered, meaning that the major source of variation cannot be explained by culture positve/negativ groups. Instead, samples seem to cluster according to an unknown source of variation."
+
+# Specify levels you want to process
+tax_levels <- c("order", "family", "genus", "species", "strain")
+tax_levels <- c("genus", "species", "strain")
+matrix <- matrix %>%
+  # Filter matrix to only these levels
+  filter(level %in% tax_levels) %>%
+  
+  # Apply CLR transformation and PCA to each level
+  mutate(
+    #clr_data = map(data, ~ logratio.transfo(.x, logratio = "CLR", offset = 1)),
+    pca_res  = map(clr_data, ~ pca(.x)),
+    plot = map2(pca_res, level, ~plotIndiv(.x, col = pal,
+                group = gr$Clin_gr, ind.names = F, size.title = 9,
+                title = paste0('Metagenome, ',.y,'-PCA comp 1-2')))
+  ) %>%
+    mutate(across(3:4, ~set_names(.x, paste0(.data[["level"]]))))
+
+
+
+# ggplot
+# pca.temp$variates$X %>% 
+#   as_tibble(., rownames = "samples") %>%
+#   mutate(Candida= gr$Clin_gr) %>%
+  
+#   ggplot(aes(x=PC1, y = PC2)) +
+#   geom_point(aes(color = Candida, shape = Candida), alpha = 0.7) +
+#   theme_bw(base_size = 10) + coord_fixed(ratio = 1) +
+#   labs(title = 'Metabolites, PCA comp 1-2') +
+#   theme(legend.position = 'right', 
+#         plot.margin = unit(c(0.1,0,0,0), "cm"),
+#         legend.key.size = unit(0.4, "cm"),
+#         #legend.spacing.x = unit(0.4, 'cm')
+#         ) 
+
+```
+
+
+```{r PCA-cowplot}
+#| fig-width: 12
+
+# Plot PCA for selected levels
+
+plot_grid(
+  plotlist = map(matrix$plot, "graph"),
+  #labels = matrix$level,   # use taxonomy levels as labels
+  ncol = 3
+)
+```
+Although there is no clear seperation we can already now see that the C.a samples are more spread out along the x-axis compared to the controll groups
+
+We observe almost no separation between the groupes defined by candida culturing in the PCA sample plot. This preliminary exploration teaches us two important findings:
+
+- The major source of variation is not attributable to *Candida*, but an unknown source (we tend to observe clusters of samples, but those are not explained by *Candida* groups).
+
+- A more **directed (supervised)** analysis is needed to separate the *Candida* groups, and we should expect that the amount of variance explained by the dimensions in the **PLS-DA** analysis will be small.
+
+
+### PLS-DA
+
+```{r PLS-DA}
+#| fig-cap: "Figure 2:  PCA seperation of groups based on untuned model with 10 principal components"
+
+# select level of taxa
+matrix.t <- matrix$clr_data$species
+
+# check that samples (rows) and groups are in agreement
+dim(matrix.t)
+length(gr$Clin_gr)
+# look at the distribution of samples per group
+# this is important to know what metric to look at (Overall/BER)
+table(gr$Clin_gr)
+
+# run preliminary model
+basic.plsda <- plsda(matrix.t, gr$Clin_gr, logratio = 'none', 
+                          ncomp = 10)
+# plot the explained variance per component
+fig <- plotIndiv(basic.plsda, col = pal,
+          comp = c(1,2),
+          group = gr$Clin_gr,
+          size.title = 8, ind.names = FALSE,
+          legend = T,
+          title = "PLS-DA Components 1 & 2")$graph
+
+# fig + scale_colour_discrete(name = "My Legend", labels = c("Label1", "Label2"))
+# print(fig)
+```
+
+### Interpretation of PCA vs PLS-DA
+
+Normaly we would be able to observe improved clustering according to groups in the PLS-DA plot compared with PCA. Such an improvemnt is expected, since PLS-DA incorporates class information for each sample, unlike PCA.
+
+From the `plotIndiv()` output, the axis labels indicate the amount of variation explained per component.  
+However, the interpretation of this value differs from PCA:  
+in **PLS-DA**, the model aims to **maximise the covariance** between components associated with **X** and **Y**, rather than maximising the variance in **X** alone.
+
+still we did not se much of an improvemnt between the two plots, which could indicate that the metabolome is not very corrleated with clinincal candida groups.
+
+## Feature selection
+We want to do use a Multivariate feature selection method (sPLS-DA). 
+Multivariate methods considers features collectively, accounting for their interplay and redundancy, aiming for "more accurate prediction” 
+
+**sparse PLS-DA**
+
+sPLS was developed to perform simultaneous variable selection in both data sets X and Y data sets, by including LASSO L1 penalization in PLS on each pair of loading vectors (Lê Cao et al. 2008).
+
+by adding L1 penalty, we can enforce the genes weights to be 0 if they do not contribute to the outcome Y.
+
+## 3. Tune Sparse Model
+
+### Tuning of the model
+
+#### 🔧 `tune.splsda()`
+
+**What it does**
+
+Performs cross-validation to find the optimal model parameters for your **sPLS-DA** model.
+
+Specifically, it tunes:
+
+- The number of components (`ncomp`)  
+- The number of variables to select on each component (`keepX`)
+
+It tests multiple combinations of these parameters and identifies the best-performing model based on classification error — often using the **Balanced Error Rate (BER)** as the performance metric.
+
+### Number of variables to select
+We first define a grid of keepX values. For example here, we define a fine grid at the start, and then specify a coarser, larger sequence of values:
+```{r tuning}
+# Grid of possible keepX values that will be tested for each comp
+list.keepX <- c(1:10,  seq(20, 100, 10))
+list.keepX
+
+# This chunk takes ~ 2 min to run
+# Some convergence issues may arise but it is ok as this is run on CV folds
+set.seed(30) # For reproducibility with this notebook, remove otherwise
+
+tune.splsda <- tune.splsda(matrix.t, gr$Clin_gr, ncomp = 5, validation = 'Mfold', 
+                           folds = 5, dist = 'centroids.dist', 
+                           test.keepX = list.keepX, nrepeat = 10)
+```
+
+The following command line will output the mean error rate for each component and each tested keepX value given the past (tuned) components.
+```{r tuning-results}
+#| fig-width: 8
+#| fig-cap: "Figure 4:  For each component (coloured according to the legend), the optimal number of features to select is shown by the large diamonds. This is selected per component using a one-sided t-test. The y-axis depicts the average correlation between the predicted and actual components. This is cross-validated over folds folds and repeated nrepeat times."
+
+# Just a head of the classification error rate per keepX (in rows) and comp
+head(tune.splsda$error.rate)
+
+# To show the error bars across the repeats:
+plot(tune.splsda, sd = TRUE, group = gr$Clin_gr)
+
+```
+
+In the case that the first component already explains nearly all discriminatory signal, and the algorithm finds that adding another one doesn’t improve performance (i.e. error rate stays flat) one component will be selected.
+
+However, two components are required to visualize the samples in a 2D space (Comp 1 vs Comp 2),
+for this reason the minimum number of compnent to choose are set to 2. 
+
+```{r nr-of-comp-and-features-to-keep}
+# The optimal number of components according to our one-sided t-tests
+tune.splsda$choice.ncomp$ncomp
+
+if(tune.splsda$choice.ncomp$ncomp == 1){ncomp <- 2}else{ncomp <- tune.splsda$choice.ncomp$ncomp}
+
+# The optimal keepX parameter according to minimal error rate
+tune.splsda$choice.keepX
+```
+
+## 4. Fit Final sPLS-DA Model
+
+### Final sPLS-DA model
+We now run our final sPLS-DA model that includes five components:
+
+```{r fit-final-splsda}
+final.splsda <- splsda(matrix.t, gr$Clin_gr, 
+                       ncomp = ncomp, 
+                       keepX = tune.splsda$choice.keepX) 
+
+```
+
+#### 🎯 `perf()`
+
+**What it does**
+
+Evaluates the performance and stability of your **final sPLS-DA model** using repeated cross-validation.
+
+Unlike `tune.splsda()`, this function does **not** tune parameters — it assesses how well your chosen model performs.
+
+It computes metrics such as:
+
+- **Classification accuracy**  
+- **Balanced Error Rate (BER)**  
+- **Stability** of selected features across cross-validation folds  
+
+The results help you assess the **robustness** and **reliability** of your tuned model.
+
+| Metric                        | What it measures                                                                                                   | When to use                                                                                 |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| **Overall error rate**         | The proportion of all samples misclassified (1 − overall accuracy). It treats all samples equally.                 | Use when your classes are **balanced** (roughly equal size).                                |
+| **Balanced error rate (BER)**  | The average of the per-class error rates — i.e., it gives **equal weight** to each class regardless of class size. | Use when your classes are **imbalanced** or you want performance independent of class size. |
+
+
+```{r performance}
+#| fig-width: 8
+#| fig-cap: "Figure 5:  Tuning the number of components in sPLS-DA on the metabolome expression data. Each line (solid = overall, dashed = BER) shows classification error as the number of sPLS components increases (1 → 10). Each panel represents a different distance metric used in prediction. Bars show the standard deviation across the repeated folds."
+
+# assess the performance of the sPLS-DA model using repeated CV
+perf.splsda = perf(final.splsda,  
+                  validation = 'Mfold', 
+                  folds = 5, 
+                  nrepeat = 50, # we recommend 50 
+                  progressBar = FALSE) # TRUE to track progress
+
+# extract the optimal component number
+optimal.ncomp <- perf.splsda$choice.ncomp["BER", "max.dist"] 
+
+plot(perf.splsda, overlay = 'measure', sd=TRUE) # plot this tuning
+```
+
+For each component, repeated cross-validation (**10 × 3-fold CV**) is used to evaluate the sPLS-DA classification performance — both **overall error rate** and **balanced error rate (BER)** — for each type of prediction distance:  
+
+| Distance metric       | Description                                                                                                   | Type      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------- | ---------- |
+| **max.dist**           | Usually performs well and is the default in `mixOmics::plsda`.                                                | Linear     |
+| **centroids.dist**     | Can be more robust when class separation is moderate.                                                         | Nonlinear  |
+| **mahalanobis.dist**   | Accounts for within-class covariance — sometimes helps when classes are elliptically distributed.              | Nonlinear  |
+
+
+---
+
+### 🧭 Comparison of `tune.splsda()` and `perf()` in mixOmics
+
+| Function | Step in Workflow | Main Purpose | What It Tunes or Evaluates | Key Outputs | When to Use |
+|-----------|------------------|---------------|-----------------------------|--------------|-------------|
+| **`tune.splsda()`** | Model tuning (Step 1) | Optimize model parameters | • Number of components (`ncomp`) <br> • Number of variables per component (`keepX`) | • `choice.keepX` (optimal variables per component) <br> • `choice.ncomp` (optimal number of components) <br> • `error.rate` across tested configurations | **Before** building the final model |
+| **`perf()`** | Model evaluation (Step 2) | Assess predictive performance and feature stability | Uses the **final tuned model** to compute: <br> • Classification accuracy <br> • Balanced Error Rate (BER) <br> • Feature stability | • `error.rate` (overall and per class) <br> • `BER` <br> • `features$stable` (variable stability) | **After** tuning, to validate model robustness |
+
+---
+
+## 5. Assess Model Performance
+
+**Number of components in sPLS-DA**
+
+The `perf()` function evaluates the performance of sPLS-DA - i.e., its ability to rightly classify ‘new’ samples into their group category using repeated cross-validation. 
+We initially choose a large number of components (here ncomp = 10) and assess the model as we gradually increase the number of components. Here we use 3-fold CV repeated 10 times. 
+In Module 2, we provided further guidelines on how to choose the `folds` and `nrepeat` parameters:
+
+Retaining only the BER and the centroid.dist, numerical outputs of interest include the final overall performance for 5 components:
+
+```{r performance-results}
+perf.splsda$error.rate
+
+perf.splsda$error.rate.class$centroids.dist
+```
+
+```{r background}
+dist <- c('max.dist', 'centroids.dist') %>% 
+  set_names(., c('Max distance', 'Centroids distance'))
+background <- imap(dist, ~background.predict(final.splsda, 
+                                     comp.predicted = ncomp,
+                                     dist = .x) )
+
+iwalk(background, ~plotIndiv(final.splsda, col = pal, comp = 1:2, group = gr$Clin_gr,
+          ind.names = FALSE, title = paste0(.y),
+          legend = TRUE,  background = .x))
+```
+
+## 6. Extract Selected Features
+
+### Variable selection and stability
+
+During the repeated cross-validation process in perf() we can record how often the same variables are selected across the folds. This information is important to answer the question: How reproducible is my gene signature when the training set is perturbed via cross-validation?.
+
+```{r feature-stability}
+#| fig-width: 10
+#| fig-cap: "Figure 6:  Stability of variable selection from the sPLS-DA on the metabol data. We use a by-product from perf() to assess how often the same variables are selected for a given keepX value in the final sPLS-DA model. The barplot represents the frequency of selection across repeated CV folds for each selected gene for component 1 and 2. The metabolites are ranked according to decreasing frequency."
+
+# Convert named vector to tibble
+stable.comp1 <- perf.splsda$features$stable$comp1
+stable.comp2 <- perf.splsda$features$stable$comp2
+
+df <- tibble(
+  Feature = c(names(stable.comp1), names(stable.comp2)),
+  Stability = c(as.numeric(stable.comp1), as.numeric(stable.comp2)),
+  comp = c(rep("comp1",length(stable.comp1)), rep("comp2",length(stable.comp2)))
+) %>%
+  arrange(desc(Stability), .by = "comp") %>%
+  slice_head(., n = length(stable.comp2), by = "comp")
+
+# arrange accoroding to value for individal facets
+reorder_within <- function(x, by, within, fun = mean, sep = "___", ...) {
+    new_x <- paste(x, within, sep = sep)
+    stats::reorder(new_x, by, FUN = fun, decreasing = T)
+}
+scale_x_reordered <- function(..., sep = "___") {
+    reg <- paste0(sep, ".+$")
+    ggplot2::scale_x_discrete(labels = function(x) gsub(reg, "", x), ...)
+}
+
+# Create ggplot bar chart
+ggplot(df, aes(x = reorder_within(Feature, Stability, comp), y = Stability)) +
+  geom_col(fill = "#f588af") +
+  labs(
+    x = "Variables selected across CV folds",
+    y = "Stability frequency",
+    title = "Feature stability"
+  ) +
+  scale_x_reordered() +
+  theme_minimal() + facet_wrap(~comp, scales = "free") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+```{r}
+#| label: fig-plsda-samples
+#| fig-cap: "Figure 7:  Sample plots from sPLS-DA comp 1-2"
+
+plotIndiv(final.splsda, col = pal, ind.names = FALSE, legend=TRUE,
+          comp=c(1,2), ellipse = TRUE, 
+          title = 'sPLS-DA on SRBCT comp 1-2',
+          X.label = 'sPLS-DA comp 1', Y.label = 'sPLS-DA comp 2') 
+
+# plotIndiv(final.splsda, col = pal, ind.names = FALSE, legend=TRUE,
+#           comp=c(2,3), ellipse = TRUE, 
+#           title = 'sPLS-DA on SRBCT comp 2-3',
+#           X.label = 'sPLS-DA comp 2', Y.label = 'sPLS-DA comp 3')
+```
+
+Let’s see the top metabolites for each of the sPLS components
+```{r top-metabolites-per-comp}
+#| fig-width: 8
+#| fig-height: 5
+#| fig-cap: "Figure 8: Loading plot of the features selected by sPLS-DA on each component. Features are ranked according to their loading weight (most important at the top to least important at the bottom) and class. Colours indicate the class for which a particular gene is maximally expressed, on average, in this particular class. The plot helps to further characterise the signature of the data and should be interpreted jointly with the sample plot (Figure 5)."
+
+scale_y_reordered <- function(..., sep = "___") {
+    reg <- paste0(sep, ".+$")
+    ggplot2::scale_y_discrete(labels = function(x) gsub(reg, "", x), ...)
+}
+
+get_feature_group_mapping <- function(comp = "comp1", method = c("mean", "median")) {
+  method <- match.arg(method)
+  p_comp <- final.splsda$loadings$X[, comp]   # feature loadings for that component
+
+  # Compute contribution of each feature to each sample’s score
+  # (This is essentially X * p_comp, since t = X %*% p)
+  contrib <- matrix.t %*% diag(p_comp)
+  colnames(contrib) <- colnames(matrix.t)
+
+  # Calc mean contribution per feature to get group
+  mean_contrib <- contrib %>% # features × componentscontrib %>%
+  as_tibble(rownames = "Metabolite") %>%
+  mutate(gr = gr$Clin_gr) %>%
+  pivot_longer(
+    cols = -c(Metabolite, gr),
+    names_to = "feature",
+    values_to = "value"
+  ) %>%
+  summarise(
+    mean   = mean(value, na.rm = TRUE),
+    median = median(value, na.rm = TRUE),
+    .by = c(gr, feature)
+  ) %>%
+  mutate(
+    gr_mean = gr[which.max(abs(mean))],
+    gr_median = gr[which.max(abs(median))],
+    .by = "feature"
+  ) %>%
+  slice_max(abs(.data[[method]]), n = 1, by=feature) %>%
+  arrange(desc(abs(.data[[method]]))) %>%
+  select(feature, group = gr) %>% deframe() }
+
+gr_map <- c("comp1","comp2") %>% 
+  set_names() %>%
+  imap(., ~get_feature_group_mapping(.x))
+
+final.splsda$loadings$X %>%
+  as_tibble(., rownames = "Metabolite") %>%
+  pivot_longer(cols = starts_with("comp"),
+               names_to = "component",
+               values_to = "value") %>%
+  #group_by(component) %>%
+  slice_max(abs(value), n = 20, by = component, with_ties = FALSE) %>%
+  mutate(Metabolite = ifelse(value == 0, strrep(" ", row_number()), Metabolite)) %>%
+  mutate(Reg = 
+        ifelse(value > 0 , "UP", "DOWN")) %>%
+  mutate(Metabolite = reorder_within(as.character(Metabolite), value, component)) %>%
+  #mutate(gr = gr_map[ Metabolite]) %>%
+  rowwise() %>%  # allows per-row lookup
+  mutate(gr = gr_map[[component]][[Metabolite]]) %>%
+  ungroup() %>%
+
+
+# plot
+  ggplot(aes(value, Metabolite, fill = factor(Reg))) +
+  geom_col(show.legend = FALSE, width = 0.9) +
+  scale_fill_manual(values = pal) +
+  facet_wrap(~component, scale='free') +
+  scale_y_reordered() +
+  labs(y = NULL) +
+  theme_minimal()
+
+# reorder_within(Metabolite, value, component)
+# fct_reorder(Metabolite, value)
+```
+
+In a discriminant model (e.g. **sPLS-DA**), each feature (say a metabolite or OTU) gets a loading weight
+for each component, that weight tells you how strongly (and in what direction) that feature contributes to separating groups along that component.
+
+For discriminant analysis, the color corresponds to the group in which the feature is most 'abundant'. Note that this type of graphical output is particularly insightful for count microbial data - in that latter case using the method = 'median' is advised. Note also that if the parameter contrib is not provided, plots are white.
+
+**Variable Importance**
+
+A VIP score is a measure of a variable’s importance in the sPLS-DA model. It summarizes the contribution a variable makes to the model. The VIP score of a variable is calculated as a weighted sum of the squared correlations between the sPLS-DA components and the original variable.
+
+```{r Variable-importance-in-projection}
+#| fig-width: 8
+#| fig-height: 5
+#| fig-cap: "Figure 8: Variable importance in projection (VIP) coefficients reflect the relative importance of each X variable for each X variate in the prediction model. VIP allows to classify the X-variables according to their explanatory power of Y. Predictors with large VIP, larger than 1, are the most relevant for explaining Y."
+
+splsda.vip <- vip(final.splsda)
+
+# Convert to tidy (long) format for ggplot
+vip_long <- splsda.vip %>%
+  as_tibble(., rownames = "Metabolite") %>%
+  pivot_longer(cols = starts_with("comp"),
+               names_to = "Component",
+               values_to = "VIP")
+
+# Find top 5 metabolites (by mean VIP for each components)
+top_metabolites <- vip_long %>%
+  mutate(meanVIP = mean(VIP), .by=c("Metabolite", "Component")) %>%
+  nest(data = -Component) %>%
+  mutate(data = imap(
+    data, ~ .x %>%
+      arrange(., desc(meanVIP)) %>%
+      slice_head(., n = 5) )) %>%
+  unnest(data) 
+
+clus <- c(RColorBrewer::brewer.pal(8,"Set2"),
+          RColorBrewer::brewer.pal(8,"Paired"))
+
+# Plot with ggplot
+top_metabolites %>%
+  ggplot(., aes(x = Component, y = VIP, fill = Metabolite)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+    labs(title = "Variable Importance in the Projection (Top 5)",
+         x = "Component",
+         y = "VIP Score") +
+    theme_minimal(base_size = 14) +
+    scale_fill_manual( values = clus) +
+    theme(
+      legend.title = element_blank(),
+      plot.title = element_text(face = "bold", hjust = 0.5)
+    )
+```
+
+```{r metabolites-selected}
+# same as figure 7:
+# par( mfrow= c(1,2) )
+# p <- c(1,2) %>% set_names(., c("comp1", "comp2")) %>%
+#   map(., ~plotLoadings(final.splsda, comp = .x, 
+#              method = 'mean', contrib = 'max',
+#              # contrib (max or min) indicate if the color of the bar should correspond to the group with the maximal or minimal expression levels/abundance
+#              size.name = 0.8, legend = FALSE, size.title = 1,
+#              ndisplay = 20, style = "ggplot2",
+#              title = paste0("Loadings of Component ",.x)))
+
+
+# determine which OTUs were selected
+selected.f.comp1 = selectVar(final.splsda, comp = 1)$name 
+selected.f.comp2 = selectVar(final.splsda, comp = 2)$name 
+
+# display the stability values of these OTUs
+enframe(perf.splsda$features$stable[[1]][selected.f.comp1]) %>% arrange(desc(abs(value)))
+enframe(perf.splsda$features$stable[[2]][selected.f.comp2]) %>% arrange(desc(abs(value)))
+```
+
+
+
+```{r mixOmic-heatmap}
+#| eval: false
+png("cim_plot.png", width = 2000, height = 2000, res = 300)
+cim(final.splsda,
+    comp = c(1,2),
+    margins = c(10, 5),
+    row.sideColors = pal[factor(gr$Clin_gr)], # row colors by bodysite
+    legend = list(legend = levels(factor(gr$Clin_grs))),
+    title = 'Clustered heatmap of Metagenome data')
+dev.off()
+
+```
+
