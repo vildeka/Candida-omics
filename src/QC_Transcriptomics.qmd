@@ -14,6 +14,25 @@ format:
       caption: Code
 ---
 
+## Overview: 
+#### Quality Control and Normalization
+
+0. **Sample Information**  
+
+1. **Step 1: Load data and meta data**  
+   Load data and meta data and filter out any QC samples.
+
+2. **Step 2: Gene-filtering**  
+   Identify treshold for low abundant genes to filter
+
+3. **Step 3: Normalize counts with TMM and CPM log2**
+
+4. **Step 4: Compare re-sequenced samples**
+
+5. **Step 5: Differential Gene Expression analysis**
+
+6. **Step 6: Exploratory Heatmap**
+
 ### Load Libraries
 ```{r Libraries}
 #| code-fold: true
@@ -95,7 +114,7 @@ raw_matrix <- read_csv(trx_path)
 ## Get group assignment
 ```{r group-assignment}
 #| code-fold: true
-gr <- c("0"="ctrl", "1"="ctrl", "2"="int", "3"="int", "4"="C.a", "5"="C.a")
+g <- c("0"="0-1", "1"="0-1", "2"="2-3", "3"="2-3", "4"="4-5", "5"="4-5")
 gr_data <- meta_data %>%
     rename(`Symptom score (0-5)` = "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren") %>%
   select(
@@ -134,7 +153,7 @@ gr_data <- meta_data %>%
   )
 ) %>%
   select("svamp_ID", group, everything()) %>%
-  mutate(Clin_gr = gr[.$`Clinical score (0-5)`], .after ="group")
+  mutate(Clin_gr = g[.$`Clinical score (0-5)`], .after ="group")
 
 ```
 
@@ -144,7 +163,7 @@ table(gr_data$`Clinical score (0-5)`)
 table(gr_data$Clin_gr)
 ```
 
-## Filter genes
+## Step 2: Gene-filtering
 
 We calculate the mean log2 CPM of each gene to determine what filtering cuttof to use. 
 By looking at the histogram of the mean log2 CPM values you can determine what log2 CPM value would be suitable to use. You want to see a normal distribution of the mean log2 values. In this dataset vi see that there are a higer frequency of genes around log2CPM between 1 and 2 than what you would expect from the normal distribution. Therfore a cuttof at 1.5 seem to be appropriate. this resulted in the removal of 2861 genes. 
@@ -246,7 +265,7 @@ ggplot() +
 dim(countTable_filt) # nr. of genes x nr. samples after filtering
 ```
 
-## Normalize
+## Step 3: Normalize counts with TMM and CPM log2
 
 ```{r Normalized-data}
 #| eval: true
@@ -274,7 +293,7 @@ cpm_log_TMM %>%
 # norm <- read_csv("../Results/MixOmic/Transcriptomics_Normalized.csv")
 ```
 
-## compare re-sequenced samples
+## Step 4: compare re-sequenced samples
 
 ```{r compare-re-sequenced-samples}
 #| fig-width: 10
@@ -336,7 +355,7 @@ countTable_final <- countTable_filt %>%
 ```
 
 
-## DGE analysis
+## Step 5: Differential Gene Expression analysis
 
 ```{r functions}
 ##################
@@ -390,7 +409,7 @@ samples <- colnames(countTable_final)
 intersect(samples, gr_data$svamp_ID)
 setdiff(samples, gr_data$svamp_ID)
 
-gr <- c("ctrl", "int", "C.a", "X")
+gr <- c("0-1", "2-3", "4-5", "X")
 
 gr_data <- gr_data %>%
   filter(svamp_ID %in% samples) %>%
@@ -405,7 +424,7 @@ dge <- column_to_rownames(countTable_final, var = "symbol") %>%
   edgR_dge.fun(., "Clin_gr", gr_data, confound=NULL)
 ```
 
-## Plot heatmap
+## Step 6: Exploratory Heatmap
 
 ```{r get-matrix}
 ###############
@@ -415,11 +434,11 @@ dge <- column_to_rownames(countTable_final, var = "symbol") %>%
 DEGs <- dge$top %>%
   as_tibble(.) %>%
   mutate(Regulation = 
-        ifelse(logFC.groupsC.a > 0 & FDR < 0.05, "UP",
-          ifelse(logFC.groupsC.a < 0 & FDR < 0.05,"DOWN", "NOT SIG."))) %>%
+        ifelse(`logFC.groups4.5` > 0 & FDR < 0.05, "UP",
+          ifelse(`logFC.groups4.5` < 0 & FDR < 0.05,"DOWN", "NOT SIG."))) %>%
   filter(Regulation == "UP" | Regulation == "DOWN") %>%
-  dplyr::select(Genes, logFC.groupsC.a) %>%
-  arrange(logFC.groupsC.a)
+  dplyr::select(Genes, logFC.groups4.5) %>%
+  arrange(`logFC.groups4.5`)
 
 # get filter genes from normalized matrix
 deg_matrix <- cpm_log_TMM[DEGs$Genes, gr_data$svamp_ID]
@@ -565,9 +584,9 @@ H <- Heatmap(zscore,
              # right_annotation = right_anno_row, left_annotation = left_anno_row,
              top_annotation = top_annot
                                           ) 
-
+H
 pdf(file = "./Heatmap_gene_expression.pdf", width = 10, height = 7)
 H
 dev.off()
-H
+
 ```
