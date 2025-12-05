@@ -20,23 +20,26 @@ format:
 1. **Step 1: Load data and meta data**  
    Load data and meta data and filter out any QC samples.
 
-2. **Step 2: Taxonomical-filtering**  
+2. **Step 2: Filter low count samples**  
+
+3. **Step 3: Taxonomical-filtering**  
    Identify treshold for low abundant taxa to filter<br>
    Step 1. Split clade name into seperate columns<br>
    Step 2. Identify the strains to remove<br>
    Step 3. Aggregate removed strains by higher levels<br>
    Step 4. Get longer format and add back clade_names<br>
    Step 5. Subtract filtered taxa from each higher taxa levels<br>
-   Step 6: Re-normalize each sample to 100%<br>
+   Step 6. Check for samples with total taxa < 60% after filtering<br>
    Step 7: Check and replace negative values with zero<br>
+   Step 8: Re-normalize each sample to 100%<br>
 
-3. **Step 3: Simplify clade names**  
+4. **Step 4: Simplify clade names**  
 
-4. **Step 4: Centered Log Ratio (CLR) Transformation**
+5. **Step 5: Centered Log Ratio (CLR) Transformation**
 
-5. **Step 5: Exploratory Unsupervised PCA**
+6. **Step 6: Exploratory Unsupervised PCA**
 
-6. **Step 6: Exploratory Heatmap**
+7. **Step 7: Exploratory Heatmap**
 
 ### Load Libraries
 ```{r Libraries}
@@ -81,12 +84,14 @@ https://mixomics.org/mixmc/mixmc-preprocessing/
 
 ```{r Load-data}
 data_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/Tidy_data/Metagenomics/Metageonome_all_vagswab_metaphlan.csv"
+count_info_vagswab_path <- "../Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv"
 meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
 
 #############
 # LOAD DATA #
 #############
 data <- read_csv(data_path) 
+count_info_vagswab <- read_csv(count_info_vagswab_path)
 meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1, na = "na")
 ```
 
@@ -132,8 +137,25 @@ gr_data <- meta_data %>%
 
 ```
 
+## Step 2: Filter low count samples
 
-## Step 2: Pre-filtering
+```{r Filter-samples}
+# Identify samples with low total reads < 20 million total reads (human + bacterial)
+count_info_vagswab %>%
+  filter(after_fastp < 20000000) %>% # 1 sample
+  knitr::kable()
+
+# check bacterial reads bellow 100k
+count_info_vagswab %>%
+  filter(after_kraken2_host_removal < 100000) %>%
+  knitr::kable()
+
+# remove samples with low read count
+data <- data %>%
+    select( -S10) # removes ctrl and extra samples
+```
+
+## Step 3: Taxonomical-filtering
 keep taxa with at least 0.005% in at least 6% (6 out of 93) of samples, or at least 2% relative abundance in at least 1 sample.
 
 ```{r filter-taxa}
@@ -143,8 +165,8 @@ keep taxa with at least 0.005% in at least 6% (6 out of 93) of samples, or at le
 ###########################
 t <- set_names(taxonomy, seq_along(taxonomy))
 data <- data %>%
-    select( -contains("ex"), -contains("seq"), -contains("_run2")) %>% # removes ctrl and extra samples
-    select(-matches("_1W|_3M|_6M")) %>%
+    select( -contains("ex"), -contains("seq"), -contains("_run2"), -starts_with("KX")) %>% # removes ctrl and extra samples
+    #select(-matches("_1W|_3M|_6M")) %>%
     mutate(
         level = factor(
             t[as.character(str_count(clade_name, "\\|") + 1)],
@@ -153,10 +175,11 @@ data <- data %>%
             ) 
 
 n_samples <- select(data, starts_with("S")) %>% ncol() # number of good samples
+n_samples
 
 # keep taxa with at least 0.005% in at least 6% (5 out of 84) of samples, or at least 2% relative abundance in at least 1 sample.
 
-# Step 1. split clade name into seperate columns
+# --- Step 1. split clade name into seperate columns
 temp <- data %>%
     separate(
     col = clade_name,
@@ -168,7 +191,7 @@ temp <- data %>%
   # keeps any row where at least one numeric column has a value greater than zero
   filter(if_any(where(is.double), ~ .x > 0))
 
-# Step 2. Identify the strains to remove
+# --- Step 2. Identify the strains to remove
 strains_to_remove <- temp %>%
   filter(level == "strain") %>%
   filter(
@@ -187,7 +210,7 @@ strains_to_remove %>%
   knitr::kable(., digits = 1)
 
 
-# Step 3. Aggregate removed strains by higher levels
+# --- Step 3. Aggregate removed strains by higher levels
 removed_all_lvls <- strains_to_remove %>%
   # pivot_longer(cols = where(is.double), names_to = "sample", values_to = "removed_abundance") %>%
   select(-level) %>%
@@ -210,7 +233,7 @@ removed_all_lvls
 knitr::kable(removed_all_lvls$data[[2]], digits = 1)
 
 
-# Step 4. get longer format and add back clade_names
+# --- Step 4. get longer format and add back clade_names
 # function to get clade name
 get_full_clade.fun <- function(df) {
   # This will add a new column called match_clade
@@ -239,7 +262,7 @@ removals <- removed_all_lvls %>%
 #############################
 # FILTER AT ALL TAXA LEVELS #
 ############################
-# Step 5. Subtract from higher levels
+# --- Step 5. Subtract from higher levels
 data_filt <- data %>%
   # Join percentages to be subtracted
   left_join(
@@ -256,7 +279,17 @@ data_filt <- data %>%
   ) %>%
   select(-ends_with("_rm"))
 
-# --- Step 6: check and replace negatives ---
+# --- Step 6. report any samples with less than 60% total taxa after filtering
+data_filt %>%
+  #select(clade_name, level, S10) %>%
+  filter(level == "family") %>%
+  select(-clade_name, -level) %>%
+  colSums() %>% {. ->> colsums} %>% enframe() %>% arrange(value)
+
+colsums
+colsums[colsums <= 60]
+
+# --- Step 7: check and replace negatives ---
 indx <- which(data_filt < 0, arr.ind = TRUE)
 
 if (nrow(indx) > 0) {
@@ -282,7 +315,7 @@ data_filt %>% filter(level == "genus") %>% pull("S39") %>% sum(.)
 #####################################
 # RENORMALIZED FILTERED TAXA VALUES #
 #####################################
-# Step 6. Re-normalize so each sample sums to 100
+# --- Step 8. Re-normalize so each sample sums to 100
 data_filt_norm <- data_filt %>%
   group_by(level) %>%
   mutate(
@@ -307,11 +340,13 @@ data_filt_norm %>%
     .,
     "../Results/MixOmic/Metageonome_all_vagswab_metaphlan_taxa_filt.csv"
   )
+
+data_filt_norm
 # data_filt_norm <- read_csv("../Results/Tissue_QC/Metageonome_all_vagswab_metaphlan_taxa_filt.csv")
 ```
 
 
-## Step 3: Centered Log Ratio (CLR) Transformation
+## Step 4: Centered Log Ratio (CLR) Transformation
 For technical, biological and computational reasons, microbiome data is compositional such that they represent proportions or relative information. Proportional data are restricted to a space where the sum of all OTU proportions for a given sample sums to 1. Using standard statistical methods on such data may lead to spurious results. Likewise, any data that are compositional in nature are interpreted into relative counts. Hence, using a CLR transformation allows the circumvention of these spurious results.
 
 There are two ways of log-ratio transforming the data in mixOmics:
@@ -369,7 +404,7 @@ data_filt_norm <- data_filt_norm %>%
 ```
 
 
-## Step 4: Centered Log Ratio (CLR) Transformation
+## Step 5: Centered Log Ratio (CLR) Transformation
 
 ```{r create-matrix}
 # Create matrix for all levels of taxa
@@ -411,14 +446,16 @@ matrix <- matrix %>%
 ```
 
 ```{r save-CLR-transformed-data}
-write_csv(
-  matrix,
-  "../Results/MixOmic/Metageonome_vagswab_CLR_transformed.csv"
-)
+ matrix %>%
+  select(1,clr_data) %>%
+  saveRDS(
+  .,
+    "../Results/MixOmic/Metageonome_vagswab_CLR_transformed.RDS"
+  )
 # matrix <- read_csv("../Results/MixOmic/Metageonome_vagswab_CLR_transformed.csv")
 ```
 
-## Step 5: Exploratory Unsupervised PCA
+## Step 6: Exploratory Unsupervised PCA
 
 ```{r get-new-groups}
 g <- c("0"="0-1", "1"="0-1", "2"="2-3", "3"="2-3", "4"="4-5", "5"="4-5")
@@ -497,7 +534,7 @@ For this portion of the script we are following the MixOmics tutorial here:
 https://mixomics.org/mixmc/koren-bodysites-case-study/
 
 
-## Step 6: Exploratory Heatmap
+## Step 7: Exploratory Heatmap
 
 ```{r heatmap-matrix}
 library(ComplexHeatmap)
