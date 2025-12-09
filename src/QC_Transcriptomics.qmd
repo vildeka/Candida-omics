@@ -19,19 +19,20 @@ format:
 
 0. **Sample Information**  
 
-1. **Step 1: Load data and meta data**  
-   Load data and meta data and filter out any QC samples.
+1. **Metadata and group assignment**  
 
-2. **Step 2: Gene-filtering**  
+2. **Normalize counts with TMM**
+
+3. **Gene-filtering**  
    Identify treshold for low abundant genes to filter
 
-3. **Step 3: Normalize counts with TMM and CPM log2**
+4. **Compare re-sequenced samples**
 
-4. **Step 4: Compare re-sequenced samples**
+5. **Differential Gene Expression analysis**
 
-5. **Step 5: Differential Gene Expression analysis**
+6. **Exploratory Heatmap**
 
-6. **Step 6: Exploratory Heatmap**
+7. **UMAP on signifcant genes**
 
 ### Load Libraries
 ```{r Libraries}
@@ -105,16 +106,19 @@ FF060322243, FF060322244, 231025:1, 230918., 231108:1, 231108:1
 # LOAD DATA #
 #############
 meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
+meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp_FINAL.xlsx"
 meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1)
+meta_data <- read_xlsx(meta_path, sheet = "Metadata")
 
 trx_path <- "../Tidy_data/Transcriptomics/Counts_all_trx_samples.csv"
 raw_matrix <- read_csv(trx_path)
 ```
 
-## Get group assignment
+## Step 1: Metadata and group assignment
 ```{r group-assignment}
 #| code-fold: true
 g <- c("0"="0-1", "1"="0-1", "2"="2-3", "3"="2-3", "4"="4-5", "5"="4-5")
+
 gr_data <- meta_data %>%
     rename(`Symptom score (0-5)` = "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren") %>%
   select(
@@ -126,6 +130,7 @@ gr_data <- meta_data %>%
     `Symptom score (0-5)`,
     `Recurring fungal infections > 2/year (y/n)`
   ) %>%
+  filter(!(is.na(svamp_ID))) %>%
     mutate(
   group = case_when(
     `Fungal culture: C. albicans (y/n)` == "1" &
@@ -151,9 +156,16 @@ gr_data <- meta_data %>%
 
     TRUE ~ NA_character_
   )
-) %>%
-  select("svamp_ID", group, everything()) %>%
-  mutate(Clin_gr = g[.$`Clinical score (0-5)`], .after ="group")
+)  %>%
+    mutate(
+      pos = case_when(
+        `Fungal culture: C. albicans (y/n)` == "1" |
+        `Fungal culture: Non-albicans candida spp. (y/n)` == 1 ~
+        "pos",
+        TRUE ~ "neg"
+        ), .after="group") %>%
+    mutate(Clin_gr = g[as.character(.$`Clinical score (0-5)`)], .after ="group") %>%
+  select("svamp_ID", group, everything())
 
 ```
 
@@ -163,14 +175,8 @@ table(gr_data$`Clinical score (0-5)`)
 table(gr_data$Clin_gr)
 ```
 
-## Step 2: Gene-filtering
-
-We calculate the mean log2 CPM of each gene to determine what filtering cuttof to use. 
-By looking at the histogram of the mean log2 CPM values you can determine what log2 CPM value would be suitable to use. You want to see a normal distribution of the mean log2 values. In this dataset vi see that there are a higer frequency of genes around log2CPM between 1 and 2 than what you would expect from the normal distribution. Therfore a cuttof at 1.5 seem to be appropriate. this resulted in the removal of 2861 genes. 
-
+### Get count table
 ```{r get-count-table}
-#| fig-cap: "Figure 1: Histogram of mean log2 CPM expression per gene. The vertical gray dashed line marks 1.5 log2 cpm"
-
 # remove quality controll samples
 # assuming that the NA_1-6 samples are quality ctrls, 
 # we remove them before normalizing and filtering
@@ -185,6 +191,41 @@ countTable <- countTable %>%
   filter(if_any(where(is.numeric), ~ . != 0)) %>%  # remove rows that are all zeros
   summarise(across(where(is.numeric), \(x) sum(x, na.rm = TRUE)), .by = "symbol") 
 
+```
+
+```{r number-of-samples}
+# number of uniqe samples excluding "_run2" samples
+samples <- select(countTable, where(is.numeric) & !( matches("_run2$"))) %>% colnames()
+length(samples)
+
+```
+
+## Step 2: Normalize counts with TMM 
+
+```{r Normalized-data}
+#| eval: true
+
+# get normalized matrix
+# Create DGElist object to relate counts to groups
+dge <- countTable %>%
+  column_to_rownames(., var = "symbol") %>%
+  DGEList(.)
+
+# Normalize counts with TMM 
+dge_TMM <- calcNormFactors(dge, method = "TMM")
+
+```
+
+
+## Step 3: Gene-filtering
+
+### Alternative 1:
+We calculate the mean log2 CPM of each gene to determine what filtering cuttof to use. 
+By looking at the histogram of the mean log2 CPM values you can determine what log2 CPM value would be suitable to use. You want to see a normal distribution of the mean log2 values. In this dataset vi see that there are a higer frequency of genes around log2CPM between 1 and 2 than what you would expect from the normal distribution. 
+
+```{r count-distribution-plot}
+#| fig-cap: "Figure 1: Histogram of mean log2 CPM expression per gene. The vertical gray dashed line marks 1.5 log2 cpm"
+
 # Identify low count cut-off
 meanLog2CPM <- rowMeans(log2(cpm(countTable[,-1]) + 1))
 # hist(meanLog2CPM)
@@ -197,96 +238,75 @@ ggplot() +
     ggtitle("Distribution of Mean log2 CPM") 
 
 # number of genes that will be removed:
-sum(meanLog2CPM <= 1.5) 
+s <- sum(meanLog2CPM <= 1.5) 
 
 # knitr::kable(., digits = 1)
-```
-
-```{r identify-genes-to-remove}
-#| fig-cap: "Figure 2: Histogram of mean log2 CPM expression per gene after removal of low count genes. The vertical gray dashed line marks 1.5 log2 cpm"
-
-
-# keep taxa with at least 0.005% in at least 6% (5 out of 81) of samples, or at least 2% relative abundance in at least 2 sample.
-
-# Step 1. Identify the genes to remove
-
 # Alternative 1.
-# keep taxa with at least 0.005% in at least 6% (5 out of 81) of samples, or at least 2% relative abundance in at least 2 sample.
-# number of uniqe samples excluding "_run2" samples
-n_samples <- select(countTable, matches("^S\\d\\d(?!.*_run2$).*", perl = TRUE)) %>% ncol()
-genes_to_remove_1 <- countTable %>%
-  filter(
-    !(rowSums(across(where(is.double), ~ .x > 0.005)) >=
-      round(0.06 * n_samples) |
-      rowSums(across(where(is.double), ~ .x >= 2)) >= 2)
-  ) %>%
-  arrange(desc(rowSums(across(where(is.numeric))))) 
+genes_keep_1 <- countTable %>%
+  filter(rowMeans(across(any_of(samples))) > 1.5) %>%
+  pluck(., "symbol")
+  
+countTable %>%
+  mutate(meanLog2CPM = rowMeans(across(any_of(samples))),.after="symbol") %>%
+  mutate(cumulative_sum = rowSums(across(any_of(samples))),.after="symbol") %>%
+  filter(meanLog2CPM < 1.5) %>%
+  arrange(desc(cumulative_sum)) %>%
+  select(1:3)
+```
 
-genes_to_remove_1 %>%
-  mutate(cumulative_sum = rowSums(across(where(is.numeric)))) %>%
-  select(symbol, cumulative_sum)
+A cuttof at 1.5 seem to be appropriate and would result in the removal of `{r} s` genes. 
 
+### Alternative 2:
+Another aproach is to filter genes by setting a minimum treshold of counts per million
+
+Keep genes where CPM > 1 in more than 3 samples
+```{r identify-genes-to-remove}
 # Alternative 2.
-genes_to_remove_2 <- countTable %>%
-  mutate(meanLog2CPM = rowMeans(across(where(is.double)))) %>%
-  filter(meanLog2CPM < 1) %>%
-  select(-meanLog2CPM)
+# get counts per mullion (CPM) not logged, for filtering:
+cpm_TMM <- cpm(dge_TMM, log=FALSE)
 
-genes_to_remove_2 %>%
-  mutate(cumulative_sum = rowSums(across(where(is.numeric)))) %>%
-  select(symbol, cumulative_sum) %>%
-  arrange(desc(cumulative_sum))
+genes_keep_2 <- cpm_TMM %>%
+  as_tibble(., rownames = "symbol") %>%
+  filter(rowSums(across(all_of(samples), ~ .x >= 1)) >= 3) %>%
+  pluck(., "symbol")
 
-length(intersect(genes_to_remove_1, genes_to_remove_2))
+# look at top filtered genes
+cpm_TMM %>%
+  as_tibble(., rownames = "symbol") %>%
+  filter(!(symbol %in% genes_keep_2)) %>%
+  mutate(n_over_1cpm = rowSums(across(all_of(samples), ~ .x >= 1)), .after="symbol") %>%
+  mutate(sum_cpm = rowSums(across(all_of(samples))), .after = "symbol") %>%
+  filter(n_over_1cpm < 3) %>% 
+  arrange(desc(n_over_1cpm)) %>%
+  select(1:3)
+
+length(genes_keep_1)
+length(genes_keep_2)
+length(intersect(genes_keep_1, genes_keep_2))
 
 ```
 
-I think Alternative one is much better at identifying low expressed genes. 
-Alternative 2 is too indesciminant, removing certain genes of intrest. 
+Alternative one is less conservative presarving more lowly expressed genes. 
+Alternative 2 is more sensitive. 
+We go for alternative 2 as more than 16 000 genes is more than enough.
 
 ```{r filter-genes}
 # Step 3. filter low abundant genes
+# DEGlist object
+dge_TMM_filt <- dge_TMM[genes_keep_2,]
+
+# count table
 countTable_filt <- countTable %>%
-  filter(symbol != genes_to_remove_1$symbol)
+  filter(symbol %in% genes_keep_2)
 
-
-# Filter low counts
-meanLog2CPM_filt <- rowMeans(log2(cpm(countTable_filt[,-1]) + 1))
-
-# hist(meanLog2CPM_filt, breaks= seq(0,16,length.out = 15))
-ggplot() +
-    geom_histogram(aes(meanLog2CPM_filt), 
-      fill = "red", alpha = 0.7, bins = 50) +
-    theme_minimal() +
-    scale_y_continuous(labels = label_comma()) + # <-- commas
-    geom_vline(xintercept = 1.5, color = "gray", linetype = "dashed") +
-    ggtitle("Distribution of Mean log2 CPM") 
-
-dim(countTable_filt) # nr. of genes x nr. samples after filtering
-```
-
-## Step 3: Normalize counts with TMM and CPM log2
-
-```{r Normalized-data}
-#| eval: true
-
-# get normalized matrix
-# Create DGElist object to relate counts to groups
-dge <- countTable_filt %>%
-  column_to_rownames(., var = "symbol") %>%
-  DGEList(., 
-          #group = data_meta$Groups,
-          genes = .)
-
-# Normalize counts with TMM and CPM log2
-dge_TMM <- calcNormFactors(dge, method = "TMM")
-cpm_log_TMM <- cpm(dge_TMM, log=T) # for heatmap
 ```
 
 ```{r save-mormalized-data}
 ########################
 # SAVE NORMALIZED DATA #
 ########################
+cpm_log_TMM <- cpm(dge_TMM_filt, log=T) # for heatmap 
+
 cpm_log_TMM %>%
   as_tibble(., rownames = "symbol") %>%
   write_csv(., "../Results/MixOmic/Transcriptomics_Normalized.csv")
@@ -344,6 +364,7 @@ air_plots <- map(samp, function(samp) {
 cowplot::plot_grid(plotlist = air_plots, ncol = 2)
 ```
 
+### Remove ctrl and second run samples
 
 ```{r filter-samples}
 countTable_final <- countTable_filt %>%
@@ -365,10 +386,10 @@ countTable_final <- countTable_filt %>%
 # sample_df <- gr_data
 # group <- "Clin_gr"
 
-edgR_dge.fun <- function(CountMatrix, group, sample_df, confound = NULL) {
+edgR_dge.fun <- function(CountMatrix, gr, sample_df, confound = NULL) {
   
   #groups <- sample_df[, group]
-  groups <- pull(sample_df, group)
+  groups <- pull(sample_df, gr)
   n_gr <- length(na.omit(unique(groups)))
   
   if(any(is.na(groups))) {
@@ -383,7 +404,7 @@ edgR_dge.fun <- function(CountMatrix, group, sample_df, confound = NULL) {
     design <- model.matrix(~groups, data=sample_df) # without confounders
   }
   
-  colnames(design) <- sub(group,"",colnames(design))
+  colnames(design) <- sub(gr,"",colnames(design))
   colnames(design) <- sub("\\(Intercept\\)","Intercept",colnames(design))
   colnames(design) <- sub(" ","_",colnames(design))
   
@@ -395,7 +416,7 @@ edgR_dge.fun <- function(CountMatrix, group, sample_df, confound = NULL) {
   
   lrt <- glmLRT(fit,coef=2:n_gr) # with intercept
   top <- topTags(lrt,adjust.method = "BH",n = "all",sort.by = "p.value")[[1]]
-  colnames(top) <- sub(group,"",colnames(top))
+  colnames(top) <- sub(gr,"",colnames(top))
   top <- cbind(LogFC.intercept=0,top) # with intercept
   top <-  rownames_to_column(top, var = "Genes")
   
@@ -409,11 +430,11 @@ samples <- colnames(countTable_final)
 intersect(samples, gr_data$svamp_ID)
 setdiff(samples, gr_data$svamp_ID)
 
-gr <- c("0-1", "2-3", "4-5", "X")
+
+gr <- c("0-1", "2-3", "4-5")
 
 gr_data <- gr_data %>%
   filter(svamp_ID %in% samples) %>%
-  rename(Cross_group="group") %>%
   mutate(Clin_gr = factor(.$"Clin_gr", levels = gr))
 
 # nesscary only if you want to add confounders
@@ -424,19 +445,32 @@ dge <- column_to_rownames(countTable_final, var = "symbol") %>%
   edgR_dge.fun(., "Clin_gr", gr_data, confound=NULL)
 ```
 
+```{r top-DEG}
+# get DEGs for clin score 4-5
+DEGs <- dge$top %>%
+  as_tibble(.) %>%
+  mutate(Regulation = 
+        ifelse(`logFC.groups4.5` > 0 & FDR < 0.05, "UP",
+          ifelse(`logFC.groups4.5` < 0 & FDR < 0.05,"DOWN", "NOT SIG."))) %>%
+  filter(Regulation == "UP" | Regulation == "DOWN") 
+  
+
+DEGs %>%
+  dplyr::select(-LogFC.intercept, -logFC.groups2.3) %>%
+  group_by(Regulation) %>%
+  slice_max(order_by = abs(logFC.groups4.5), n = 10) %>%
+  arrange(`logFC.groups4.5`) %>%
+  knitr::kable(., digits = 1)
+```
+
 ## Step 6: Exploratory Heatmap
 
 ```{r get-matrix}
 ###############
 # GET MATRIX #
 ###############
-# get DEGs
-DEGs <- dge$top %>%
-  as_tibble(.) %>%
-  mutate(Regulation = 
-        ifelse(`logFC.groups4.5` > 0 & FDR < 0.05, "UP",
-          ifelse(`logFC.groups4.5` < 0 & FDR < 0.05,"DOWN", "NOT SIG."))) %>%
-  filter(Regulation == "UP" | Regulation == "DOWN") %>%
+# get DEGs for clin score 4-5
+DEGs  %>%
   dplyr::select(Genes, logFC.groups4.5) %>%
   arrange(`logFC.groups4.5`)
 
@@ -469,13 +503,19 @@ colnames(zscore) <- colnames(deg_matrix)
 ##############
 # colour pallets
 blue <- brewer.pal(6, name = "Blues") %>% c(., "gray") 
-Red <- brewer.pal(6, name = "Reds") %>% c(., "gray") 
+Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray") 
 pal <- c("#f26386",  "#a4d984", "#fbbc52") # "#f588af", "#fd814e" 
 pal2 <- c("#2266ac", "#91c5de")
 
+#Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray") 
+pal1 <- c("#ffa998", "#f588af","#902267") # 
+pal3 <- c("#9e8dec","#902267","#cc93cf","#a5c97b","#de9548") #"#abcb4b" "#63d3b4"
+
 # group information
 annot_col <- gr_data %>%
-  select(-`Age (years)`)
+  select(-`Age (years)`) %>%
+  mutate(across(c(2,3),
+                ~ factor(.x)))
 
 # check samples number
 dim(zscore)
@@ -483,9 +523,9 @@ dim(annot_col)
 
 # top annotation object:
 top_annot <- columnAnnotation(
-  Groups = annot_col$Clin_gr,
+  bin_Clin = annot_col$Clin_gr,
   Clin = annot_col$`Clinical score (0-5)`,
-  Culture = annot_col$`Fungal culture: C. albicans (y/n)`,
+  Groups = annot_col$group,
   #show_legend = FALSE,
   show_annotation_name = T,
   annotation_name_gp = gpar(fontsize = 8),
@@ -496,14 +536,17 @@ top_annot <- columnAnnotation(
     title_gp = gpar(fontsize = 8)),
   simple_anno_size = unit(.3, "cm"),
   #gap = unit(1, "cm"),
-  col=list( Clin=set_names(Red, sort(unique(annot_col$`Clinical score (0-5)`))),
-            Groups=set_names(pal, sort(unique(annot_col$Clin_gr))),
-            Culture=set_names(pal2, sort(unique(annot_col$`Fungal culture: C. albicans (y/n)`)))) 
+  col=list( Clin=set_names(Red, levels(annot_col$`Clinical score (0-5)`)),
+            bin_Clin=set_names(pal1, levels(annot_col$Clin_gr)),
+            Groups=set_names(pal3, levels(annot_col$group)))
             )
 ```
 
+
 ```{r heatmap-color-scale}
 #| fig-cap: "Figure 3: Histogram showing the distribution of z-score normalized matrix values"
+#| fig-width: 10
+#| fig-height: 5
 ################
 # PLOT HEATMAP #
 ################
@@ -520,27 +563,22 @@ breaks.fun <- function(min, max, n){
 df <- data.frame(value = as.vector(zscore))
 
 # Basic ggplot histogram
-ggplot(df, aes(x = value)) +
+p <- ggplot(df, aes(x = value)) +
   geom_histogram(bins = 30, fill = "skyblue", color = "white") +
-  scale_x_continuous(breaks = scales::breaks_pretty(n = 20)) +
+  #scale_x_continuous(breaks = scales::breaks_pretty(n = 20)) +
   scale_y_continuous(labels = label_comma()) + # <-- commas
   labs(
     title = "Distribution of Matrix Values",
     x = "Matrix Values",
     y = "Count"
   ) +
-  theme_minimal(base_size = 14)
+  theme_minimal(base_size = 14) #+
+  #theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 # plot to better see the outlier values
-ggplot(df, aes(x = value)) +
-  geom_histogram(bins = 30, fill = "skyblue", color = "white") +
-  scale_x_continuous(breaks = scales::breaks_pretty(n = 20)) +
-  labs(
-    title = "Distribution of Matrix Values",
-    x = "Matrix Values",
-    y = "Count"
-  ) + ylim(0,5000) +
-  theme_minimal(base_size = 14)
+p2 <- p + ylim(0,5000) 
+
+plot_grid(p, p2, ncol = 2)
 
 # set limits for colourpallet
 RdBu = c("#364B9A", "#4A7BB7", "#6EA6CD", "#98CAE1", "#C2E4EF", "white", "#FEDA8B", "#FDB366", "#F67E4B", "#DD3D2D", "#A50026")
@@ -588,5 +626,40 @@ H
 pdf(file = "./Heatmap_gene_expression.pdf", width = 10, height = 7)
 H
 dev.off()
+
+```
+
+## Step 7: UMAP on signifcant genes
+
+```{r UMAP}
+#### UMAP analysis ####
+set.seed(1)
+umap<-uwot::umap(t(deg_matrix), 
+                 n_neighbors=15, init="spectral", scale=T)
+
+umap_df <- tibble("UMAP 1"=umap[,1],"UMAP 2"=umap[,2], 
+                  "ID"=rownames(umap)) %>%
+          left_join(., annot_col, by=c("ID"="svamp_ID"))
+
+#### UMAP plotting by groups ####
+col <- c('#FB5273', "#6B51A3","#9D9AC8", '#4FCEEF',"#e68633")
+
+txt_df <- umap_df %>% select(1:4) %>% mutate(txt = ifelse(group == "RVVCpos", .$ID, NA))
+
+(p <- ggplot(umap_df, aes(x=`UMAP 1`, y=`UMAP 2`, fill=group))+ 
+  #geom_jitter( shape=21, size=3, color="white", width=.5, height=.5) +  # Tassos used jitter
+  geom_point( shape=21, size=3, color="white", alpha = .7) +  
+  scale_fill_manual(values=pal3, name="group")+ 
+  geom_text(data=txt_df, aes(x=`UMAP 1`, y=`UMAP 2`, label=txt), size=3,
+            hjust = 0, nudge_x = 0.07, color="gray51") +
+  theme_bw(base_size=14)+ 
+  theme(line=element_blank(), 
+        axis.ticks=element_line(color="black"), 
+        aspect.ratio=1, axis.title=element_blank()) )
+
+# save plot to file
+dev.new(height=16.11, width=16.11, units="cm")
+#ggsave(paste0("./Figures/09/", "Bulk_UMAP.png"), p)
+
 
 ```
