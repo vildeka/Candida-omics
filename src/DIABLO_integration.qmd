@@ -1,0 +1,1037 @@
+---
+title: "DIABLO mixOmics integration"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html: 
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+      caption: Code
+params:
+  sparse: false
+---
+
+# Y binned at each clinical score and MG at species level
+
+## Overview: 
+#### DIABLO Multi-Omics Integration
+
+1. **Load already QC and normalized data**  
+   Clean, normalize, and scale each omics dataset independently.
+
+2. **Select taxa level and combine X**  
+   Use PLS-DA to confirm that class separation exists before applying sparsity.
+
+3. **Identify sample sets**  
+   Identify the optimal number of components (`ncomp`) and variables to select per component (`keepX`) via cross-validation.
+
+4. **Select response variable**  
+   Build the sPLS-DA model using the tuned parameters.
+
+5. **Specify design matrix**  
+   Evaluate classification accuracy, balanced error rate (BER), and stability of selected variables.
+
+6. **Model**  
+   Retrieve the most discriminant variables identified by the sPLS-DA model.
+
+7. **Visualize models**  
+   Use the selected features as input for integration frameworks such as **DIABLO** (`block.splsda()`).
+
+
+## parameter tuning
+
+There are several variables that wee kan tweak in order to optimise our integration model
+these include
+- weights
+- number of blocks
+- species or strain level of MG
+- number of features to select for tuning
+
+I want to test a couple of combinations to see if there are any signifcant changes
+
+## 1. Load already QC and normalized data
+
+```{r Libraries}
+#| code-fold: true
+#| output: false
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(mixOmics) 
+library(readxl)
+library(cowplot)
+library(RColorBrewer)
+library(scales)
+
+library(ComplexHeatmap)
+library(circlize)
+
+library(tidygraph)
+library(igraph)
+library(ggraph)
+select <- dplyr::select
+map <- purrr::map
+
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
+
+taxonomy <- c(
+  "kingdom",
+  "phylum",
+  "class",
+  "order",
+  "family",
+  "genus",
+  "species",
+  "strain"
+)
+
+pal <- c("#ffa998", "#f588af","#902267") # #e05e85
+feat <- c("#bdd3c5", "#48919d", "#3d4b6eff") # "#1f2e55", "#c6cdf7"
+pal <- c("#d18ac8","#3db8ac","#8861d2","#6095d7","#755fa3","#c44999")
+feat <- c("#e39ddaff","#6dded3ff","#a68cd5ff") #,"#6095d7","#755fa3","#c44999")
+
+pal <- c("#9e8dec","#902267","#cc93cf","#a5c97b","#de9548","#63d3b4") #"#abcb4b"
+```
+
+```{r Load-data}
+#| output: false
+data_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/Tidy_data/Metagenomics/Metageonome_all_vagswab_metaphlan.csv"
+meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp_FINAL.xlsx"
+# meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
+
+#############
+# LOAD DATA #
+#############
+meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 0, na = "na")
+
+# Metagenomics
+MG_matrix <- readRDS("../Results/MixOmic/Metageonome_vagswab_CLR_transformed.RDS")
+MG_select <- read_csv("../Results/MixOmic/Var_selected_Metageonome.csv")
+
+# metabolomics
+MB_matrix <- read_csv("../Results/MixOmic/Metabolom_Normalized.csv")
+MB_select <- read_csv("../Results/MixOmic/Var_selected_Metabolome.csv")
+
+# metabolomics
+TR_matrix <- read_csv("../Results/MixOmic/Transcriptomics_Normalized.csv")
+TR_select <- read_csv("../Results/MixOmic/Var_selected_Transcriptomics.csv")
+```
+
+## 2. Select taxa level and combine X
+
+```{r define-X}
+# k__Eukaryota|p__Ascomycota|c__Saccharomycetes|o__Saccharomycetales|f__Debaryomycetaceae|g__Candida|s__Candida_albicans
+reg <- c("kingdom"="","phylum"="Ascomycota", "class"="Saccharomycetes", "order"="Saccharomycetales", "family"="Debaryomycetaceae", "genus"="Candida", "species"="Candida_albicans|Candida_parapsilosis|Candida_dubliniensis", "strain"= "Candida_albicans EUK5476|Candida_parapsilosis EUK5480|Candida_dubliniensis EUK42374")
+
+MG_matrix <- MG_matrix %>%
+  # remove candida albicans/fungus 
+  mutate(across(2, ~imap(., ~.x[, !grepl(reg[.y], colnames(.x)), drop = FALSE])))
+
+X <- list(TR = TR_matrix, 
+          MG = MG_matrix$clr_data$strain, 
+          MB = MB_matrix)
+map(X, ~dim(.x))
+
+X <- X %>%
+  # to add row names
+  map_at(c(1,3), ~data.frame(.x, row.names = 1)) %>%
+  map_at(c(1,3), ~t(.x)) %>%
+  # convert to matrix
+  map(., ~as.matrix(.x, ))
+
+```
+
+## 3. Identify sample sets
+
+### Get group assignment
+```{r group-assignment}
+g <- c("0"="0-1", "1"="0-1", "2"="2-3", "3"="2-3", "4"="4-5", "5"="4-5")
+
+gr_data <- meta_data %>%
+    rename(`Symptom score (0-5)` = "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren") %>%
+  select(
+    svamp_ID,
+    `Clinical score (0-5)`,
+    `Fungal culture: C. albicans (y/n)`,
+    `Fungal culture: Non-albicans candida spp. (y/n)`,
+    `Symptom score (0-5)`,
+    `Recurring fungal infections > 2/year (y/n)`
+  ) %>%
+    mutate(
+  group = case_when(
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Symptom score (0-5)` >= 1 &
+      `Recurring fungal infections > 2/year (y/n)` == "1" ~
+      "RVVCpos",
+
+    `Fungal culture: C. albicans (y/n)` == "0" &
+      `Recurring fungal infections > 2/year (y/n)` == "1" ~
+      "RVVCneg",
+
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Symptom score (0-5)` == 0 ~
+      "AS",
+
+    `Fungal culture: C. albicans (y/n)` == "0" &
+      `Recurring fungal infections > 2/year (y/n)` == "0" ~
+      "Control",
+
+    `Fungal culture: C. albicans (y/n)` == "1" &
+      `Recurring fungal infections > 2/year (y/n)` == "0" ~
+      "Candidapos",
+
+    TRUE ~ NA_character_
+  )
+)  %>%
+    mutate(
+      pos = case_when(
+        `Fungal culture: C. albicans (y/n)` == "1" |
+        `Fungal culture: Non-albicans candida spp. (y/n)` == 1 ~
+        "pos",
+        TRUE ~ "neg"
+        ), .after="group") %>%
+    mutate(Clin_gr = g[as.character(.$`Clinical score (0-5)`)], .after ="group") %>%
+  select("svamp_ID", group, everything())
+
+
+```
+
+Note, S15 and S10 was filtered out from the luminal metagenomics data, One due to low total count and one had less than 60% of taxa left after filtering.
+```{r get-new-groups}
+ids <- map(X, ~rownames(.x)) %>% unlist() %>% unique()
+
+# find intersection of all data sets
+d <- map(X, ~rownames(.x)) 
+ids <- intersect(intersect(d$TR, d$MG), d$MB)
+
+gr <- tibble(ID = ids) %>% 
+    tibble(ID_ = str_replace(ID, "_run2", "")) %>% 
+    left_join(., gr_data, by =c("ID_"="svamp_ID")) %>%
+    filter(!(is.na(.$Clin_gr)))
+
+table(gr$Clin_gr)
+```
+
+### plot sample overlap
+
+```{r venn-diagram}
+#| eval: true
+#| output: false
+
+library(VennDiagram)
+# remove all follow up samples from clinical trial
+clin <- c("_1W", "_3M", "_6M", "KX\\d\\d")
+X_ <- X %>%
+  map(., ~.x[!(grepl(paste0(clin, collapse = "$|"), rownames(.x))),] )
+
+i <- map(X, ~rownames(.x))
+i_ <- map(X_, ~rownames(.x))
+
+make_venn <- function(i) {
+
+  n12  <- length(intersect(i[["TR"]], i[["MG"]]))
+  n23  <- length(intersect(i[["MG"]], i[["MB"]]))
+  n13  <- length(intersect(i[["TR"]], i[["MB"]]))
+  n123 <- length(Reduce(intersect, list(i[["TR"]], i[["MG"]], i[["MB"]])))
+
+  venn.plot <- draw.triple.venn(
+    area1 = length(i[["TR"]]), 
+    area2 = length(i[["MG"]]), 
+    area3 = length(i[["MB"]]),
+    n12 = n12, n23 = n23, n13 = n13, n123 = n123,
+    category = c("TR", "MG", "MB"),
+    fill = feat, col = feat,
+    alpha = 0.5,
+    lty = rep("solid", 3), lwd = rep(2, 3),
+    cat.fontfamily = rep("sans", 3),
+    cex = 2,
+    cat.cex = 2
+  )
+}
+
+plots <- map(list(i, i_), ~make_venn(.x))
+
+g1 <- grobTree(plots[[1]])
+g2 <- grobTree(plots[[2]])
+
+```
+
+```{r plot-venn-diagram}
+#| fig-width: 8
+#| fig-height: 5
+grid.newpage()
+library(gridExtra)
+grid.arrange(
+  arrangeGrob(g1, top = "With follow up samples"),
+  arrangeGrob(g2, top = "Baseline only samples"),
+  ncol = 2
+)
+```
+
+## 4. Select response variable
+
+```{r clin-score-heatmap}
+
+# Convert all symptom columns to 0/1 presence (1 = symptom present)
+df <- meta_data %>% 
+  filter(svamp_ID %in% ids) %>%
+  select(svamp_ID, starts_with("Clinical score:"))
+
+df_bin <- df %>%
+  filter(!(is.na(svamp_ID))) %>%
+  mutate(across(starts_with("Clinical score:"), ~ as.numeric(.x))) %>%
+  rename_with(~ gsub("^(Clinical score: )| \\(y/n\\)$", "", .x),
+                         contains("Clinical score:")) %>%
+  filter(!(is.na(discharge))) %>%
+  column_to_rownames("svamp_ID")
+
+# Convert to matrix for ComplexHeatmap
+mat <- as.matrix(df_bin)
+
+my_h <- 0.1*dim(mat)[1]
+
+# annotation
+annot_col <- gr_data %>%
+  #left_join(., df, by ="svamp_ID") %>%
+  filter(svamp_ID %in% rownames(df_bin)) %>%
+  select(1:3, Clin_gr, pos) %>%
+  mutate(across(2:5,
+                ~ factor(.x)))
+
+# check samples number
+dim(mat)
+dim(annot_col)
+
+Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray") 
+pal1 <- c("#ffa998", "#f588af","#902267") # #e05e85
+pal2 <- c("#9e8dec","#902267","#cc93cf","#a5c97b","#de9548") #"#abcb4b" "#63d3b4"
+
+
+# top annotation object:
+row_annot <- rowAnnotation(
+  bin_Clin = annot_col$Clin_gr,
+  Clin = annot_col$`Clinical score (0-5)`,
+  Groups = annot_col$group,
+  #show_legend = FALSE,
+  show_annotation_name = T,
+  annotation_name_gp = gpar(fontsize = 8),
+  annotation_legend_param = list(
+    grid_height = unit(.1, "mm"), 
+    grid_width = unit(2, "mm"), 
+    title = "", labels_gp = gpar(fontsize = 7), 
+    title_gp = gpar(fontsize = 8)),
+  simple_anno_size = unit(.3, "cm"),
+  #gap = unit(1, "cm"),
+  col=list( Clin=set_names(Red, levels(annot_col$`Clinical score (0-5)`)),
+            bin_Clin=set_names(pal1, levels(annot_col$Clin_gr)),
+            Groups=set_names(pal2, levels(annot_col$group)))
+            )
+
+
+# Define colors (0 = white, 1 = red)
+col_fun <- colorRamp2(c(0, 1), c("white", "#e05e85"))
+
+```
+
+```{r plot-clin-score}
+#| fig-width: 5
+#| fig-height: !expr my_h
+# Create heatmap
+H <- Heatmap(
+  mat,
+  width = unit(ncol(mat) * 5, "mm"), 
+  height = unit(nrow(mat) * 2, "mm"), 
+  name = "Symptom Present",
+  col = col_fun,
+  right_annotation = row_annot,
+  #cluster_rows = FALSE,
+  #cluster_columns = FALSE,
+  row_names_side = "right",
+  column_names_rot = 45,
+  row_names_gp = gpar(fontsize = 7),
+  heatmap_legend_param = list(
+    at = c(0, 1),
+    labels = c("No", "Yes")
+  ),
+    #   cell_fun = function(j, i, x, y, width, height, fill) {
+    #   grid.rect(x, y, width, height, gp = gpar(col = "grey70", lwd = 0.5, fill = NA))
+    # }
+    layer_fun = function(j, i, x, y, width, height, fill) {
+    # Draw cell borders without overwriting fill
+    grid.rect(x = x,y = y, width = width, height = height,
+      gp = gpar(col = "grey70", lwd = 0.4, fill = NA)
+    )
+  }
+)
+draw(H)
+```
+
+### Filter samples 
+```{r filter-samples}
+
+X <- X %>%
+  map(., ~.x[gr$ID,] )
+
+map(X, ~dim(.x))
+
+# specify Y
+Y <- factor(gr$`Clinical score (0-5)`)
+```
+
+## 5. Specify design matrix
+
+```{r design-matrix}
+design_whg<- matrix(0.1, ncol = length(X), nrow = length(X), 
+                dimnames = list(names(X), names(X)))
+diag(design_whg) <- 0
+
+design_full <- matrix(1, ncol = length(X), nrow = length(X), 
+                dimnames = list(names(X), names(X)))
+diag(design_full) <- 0
+
+design_whg 
+```
+
+**“full weighted design matrix”**<br>
+Indicates that the design matrix parameters are set to 0.1. This maximizes the separation between sample groups while taking into account the correlation between “omics” datasets. 
+
+**“full design matrix”**<br>
+a “full design matrix” instead (design matrix parameter set to 1), maximize the correlation between “omics” datasets, prioritizing the association between features of the metabolome with features of the transcriptome. Thus, although the integration of data with DIABLO do not always improve sample classification compared to the most predictive omic data alone, DIABLO remains useful in offering a method to associate features of the metabolome and transcriptome that can discriminate sample groups[1].
+
+
+## 5. Model
+
+::: {.panel-tabset}
+## block.plsda
+Is a multi omics pls-DA that does not perform feature selection
+
+### Filter pre-selected variables
+```{r feature-selection}
+#| eval: !expr params$sparse
+#| include: true
+
+# filter out selected variables
+f_select <- list(TR = TR_select, 
+                 MG = MG_select, 
+                 MB = MB_select)
+
+# remove some trx
+f_select$TR <- f_select$TR %>% filter(!(PC == 1 & value < 0.8))
+
+# removes anny duplicate features selected for more than one PC
+f_select <- f_select %>%
+  map(~ .x %>%
+        group_by(name) %>%
+        slice_max(value, n = 1, with_ties = FALSE) %>%
+        ungroup()
+      )
+
+
+X <- X %>%
+  # filter selected features
+  map2(., f_select, ~.x[,.y$name]) 
+
+map(X, ~dim(.x))
+```
+
+### Fit model
+```{r fit-model}
+#| eval: !expr params$sparse
+#| include: true
+
+# check 
+# 1. names are identical and in order for list.keepX and X
+# 2. check that there are no duplicate features in any of the tables in x
+# 4. features should be columns and samples rows
+names(X)
+length(Y)
+map(X, ~anyDuplicated(rownames(.x)))
+
+
+# discrete response variable:
+diablo.mod <- block.plsda(X, Y, ncomp = 2, design = design)
+
+```
+
+## block.splsda
+DIABLO, is a multi omics sparse pls-DA. The "saparse" in the name indcates that it includes feature selection
+
+
+```{r}
+# diablo.plsda <- block.plsda(X, Y, ncomp = 5, design = design)
+
+# set.seed(123) # For reproducibility, remove for your analyses
+# perf.diablo = perf(diablo.plsda, validation = 'Mfold', folds = 3, nrepeat = 10)
+
+# #perf.diablo.tcga$error.rate  # Lists the different types of error rates
+
+# # Plot of the error rates based on weighted vote
+# plot(perf.diablo)
+```
+
+```{r tuning}
+#| eval: !expr isFALSE(params$sparse)
+#| include: true
+
+# Select how many features to performe tuning for
+# set.seed(123) # for reproducibility
+# seq(min, max, interval)
+# test.keepX <- list(TR = c(10, 50, 100, seq(100, 500, 100)),
+#                    MG = c(5:9, seq(10, 50, 5)),
+#                    MB = c(seq(5, 25, 5)))
+
+
+# tune.diablo <- tune.block.splsda(X, Y, ncomp = 2, 
+#                     test.keepX = test.keepX, design = design,
+#                     validation = 'Mfold', folds = 10, nrepeat = 1, 
+#                     BPPARAM = BiocParallel::SnowParam(workers = 2),
+#                     dist = "centroids.dist")
+
+#list.keepX <- tune.diablo$choice.keepX
+# saveRDS(tune.diablo, "./tune_DIABLO.RDS")
+
+# saveRDS(list.keepX, "./list.keepX_DIABLO.RDS")
+list.keepX <- readRDS("./list.keepX_DIABLO.RDS")
+list.keepX <- list(
+  TR = c(50, 10),
+  MG = c(20, 9),
+  MB = c(10, 10)
+)
+
+#tune.diablo <- readRDS("./tune_DIABLO.RDS")
+```
+
+```{r}
+#| eval: !expr isFALSE(params$sparse)
+#| include: true
+
+diablo.mod <- block.splsda(X, Y, ncomp = 2, max.iter = 500,
+                            keepX = list.keepX, design = design_full)
+```
+
+
+
+```{r omic-correlation}
+#| fig-width: 7
+#| fig-height: 7
+
+plotDiablo(diablo.mod, ncomp = 1, col.per.group = pal)
+```
+
+```{r ordinaition-plot}
+#| fig-width: 15
+#| fig-height: 15
+
+plotIndiv(diablo.mod, ind.names = FALSE, legend = TRUE, 
+            col = pal, title = 'DIABLO comp 1 - 2')
+```
+
+
+```{r arrowplot}
+#| fig-width: 8
+#| fig-height: 5
+
+plotArrow(diablo.mod, ind.names = FALSE, legend = TRUE, 
+          col = pal, title = 'DIABLO comp 1 - 2')
+```
+
+
+```{r var-plot}
+#| fig-width: 8
+#| fig-height: 8
+
+plotVar(diablo.mod, var.names = FALSE, style = 'graphics', legend = TRUE, 
+        pch = c(16, 17, 15), cex = c(2,2,2), 
+        col = feat, 
+        title = 'DIABLO comp 1 - 2')
+```
+
+
+```{r cor-matrix}
+# filter selected variables from X
+features <- map(selectVar(diablo.mod), pluck, "name") %>% compact()
+X_filt <- imap(X, ~.x[,features[[.y]]] )
+map(X_filt, ~dim(.x))
+
+## pairwsie correlations b/w omic1 and omic2 features
+c <- c('MG','TR','MB')
+r <- c('TR','MB','MG')
+#cor_m <- map2(r, c, ~cor(X_filt[[.x]], X_filt[[.y]], use = "complete.ob", method = "spearman") ) 
+cor_m <- map2(r, c, ~cor(X[[.x]], X[[.y]], use = "complete.ob", method = "spearman") ) %>% 
+  set_names(., paste0(r, "_vs_", c))
+
+map(cor_m, ~dim(.x))
+
+
+build_similarity_matrix <- function(cor_mats, layer_order = c("TR","MG","MB"), fill_diag = NA) {
+  
+  # 1. Extract features for each layer
+  features <- list()
+  for (layer in layer_order) {
+    feats <- character(0)
+    for (nm in names(cor_mats)) {
+      parts <- strsplit(nm, "_vs_")[[1]]
+      mat <- cor_mats[[nm]]
+      if (parts[1] == layer) feats <- c(feats, rownames(mat))
+      if (parts[2] == layer) feats <- c(feats, colnames(mat))
+    }
+    features[[layer]] <- unique(feats)
+  }
+  
+  # 2. Combine all features
+  all_feats <- unique(unlist(features))
+  
+  # 3. Initialize big similarity matrix
+  big_sim <- matrix(fill_diag, nrow = length(all_feats), ncol = length(all_feats))
+  rownames(big_sim) <- colnames(big_sim) <- all_feats
+  
+  # 4. Fill cross-blocks
+  for (nm in names(cor_mats)) {
+    parts <- strsplit(nm, "_vs_")[[1]]
+    row_block <- parts[1]
+    col_block <- parts[2]
+    mat <- cor_mats[[nm]]
+    
+    row_idx <- intersect(features[[row_block]], rownames(mat))
+    col_idx <- intersect(features[[col_block]], colnames(mat))
+    
+    big_sim[row_idx, col_idx] <- mat[row_idx, col_idx, drop=FALSE]
+    big_sim[col_idx, row_idx] <- t(mat[row_idx, col_idx, drop=FALSE])
+  }
+  
+  # 5. Fill diagonal blocks with 1
+  for (layer in layer_order) {
+    f <- features[[layer]]
+    big_sim[f, f] <- 1
+  }
+  
+  return(big_sim)
+}
+
+big_cor <- build_similarity_matrix(cor_m)
+
+
+# filter genes from trx
+keep_cols <- map(cor_m, ~colSums(.x > 0.5 | .x < -0.5) > 0 ) 
+keep_rows <- map(cor_m, ~rowSums(.x > 0.4 | .x < -0.4) > 0, ) 
+
+extract_top_corr <- function(cormat, cutoff = 0.7) {
+
+  cormat %>%
+    as_tibble(rownames = "feature1") %>%
+    pivot_longer(-feature1, names_to = "feature2", values_to = "cor") %>%
+    filter(feature1 < feature2) %>%       # remove duplicates + self-correlations
+    filter(abs(cor) >= cutoff) %>%        # choose threshold
+    arrange(desc(abs(cor)))
+}
+cut <- c(0.6, 0.5, 0.55)
+top_corr_list <- map2(cor_m, cut, ~extract_top_corr(.x, cutoff = .y)) 
+
+f1 <- top_corr_list %>% map(., ~unique( pluck(.x, "feature1"))) %>% set_names(., r)
+f2 <- top_corr_list %>% map(., ~unique( pluck(.x, "feature2"))) %>% set_names(., c)
+f <- map(r, ~unique(c(f1[[.x]], f2[[.x]]))) %>% set_names(., r)
+
+```
+
+```{r circosPlot}
+#| fig-width: 10
+#| fig-height: 8
+#| fig-cap: "Circos plot from multiblock sPLS-DA. The plot represents the correlations greater than 0.7 between variables of different types, represented on the side quadrants. The internal connecting lines show the positive (negative) correlations. The outer lines show the expression levels of each variable in each sample group."
+
+png("../Results/MixOmic/MixOmic-circosPlot.png", width = 8, height = 8, res = 600, units = "in")
+sim_m <- circosPlot(diablo.mod, cutoff = 0.7, line = TRUE, size.variables = 0.5,
+           color.blocks = feat, color.Y = pal,
+           color.cor = c("#F67E4B","#6EA6CD"), size.labels = 1) #"chocolate3","grey20"
+dev.off()
+
+```
+
+![circosPlot](../Results/MixOmic/MixOmic-circosPlot.png)
+
+```{r mixOmic-heatmap}
+#| eval: !expr isFALSE(params$sparse) 
+#| fig-width: 8
+#| fig-height: 5
+
+png("../Results/MixOmic/MixOmic-heatmap.png", width = 20, height = 15, res = 600, units = "in")
+cim_obj <- cimDiablo(diablo.mod, comp = 1,
+    color.Y = pal, size.legend = 1.5, 
+    margins = c(10, 4), color.blocks = feat, legend.position = "bottomleft",
+    title = 'Clustered heatmap of integrated data')
+dev.off()
+
+dend_feat <- cim_obj$ddc
+```
+
+![mixOmic-heatmap](../Results/MixOmic/MixOmic-heatmap.png)
+
+```{r correlation-heatmaps}
+#| eval: false
+c <- c('TR','TR','MB')
+r <- c('MG','MB','MG')
+
+cor_m <- map2(r,c, ~cim(diablo.mod, comp = 1, blocks = c(.x,.y),
+    #color = pal, #size.legend = 1.5, 
+    margins = c(10, 4), save="png", #col.sideColors = feat,
+    #row.sideColors = pal[Y], # row colors by bodysite
+    #legend = list(legend = levels(Y))
+     )$mat.cor)
+
+
+map(cor_m, ~dim(.x))
+
+breaks.fun <- function(min, max, n){
+  x <- seq(min, max, length.out = n)
+  x[which(x == median(x))] <- 0
+  round(x)
+  return(x)}
+# Define a shared color scale (optional but recommended)
+RdBu = RColorBrewer::brewer.pal(7, "Spectral")
+RdBu = c("#364B9A", "#4A7BB7", "#6EA6CD", "#98CAE1", "#C2E4EF", "white", "#FEDA8B", "#FDB366", "#F67E4B", "#DD3D2D", "#A50026")
+q <- map(cor_m, ~quantile(.x[[1]], probs = seq(0, 1, 0.1)))
+col_fun <- colorRamp2(breaks.fun(min(-1), max(1), 7), colorRampPalette(c(RdBu))(7))
+lgd = Legend(col_fun = col_fun, title = "")
+
+# filter genes from trx
+keep_cols <- map(cor_m, ~colSums(.x > 0.7 | .x < -0.7) > 0 ) 
+keep_rows <- map(cor_m, ~rowSums(.x > 0.5 | .x < -0.5) > 0, ) 
+cor_m_filt <- cor_m %>% 
+  map2(., seq_along(.), ~.x[keep_rows[[.y]],, drop = FALSE])
+  #map2(., seq_along(.), ~.x[keep_rows[[.y]],keep_cols[[.y]], drop = FALSE])
+
+map(cor_m_filt, ~dim(.x))
+
+# Create each heatmap object
+lab <- c(FALSE, TRUE, TRUE)
+h <- map2(cor_m_filt, lab, ~Heatmap(.x,
+               #name = "M1",
+               col = col_fun,
+               show_column_names = .y,
+               cluster_rows = T,
+               cluster_columns = FALSE) )
+# Draw all three side by side
+lab <- c(FALSE, FALSE, TRUE)
+H_l <- map2(h, lab, ~grid.grabExpr(draw(.x, show_heatmap_legend = .y, merge_legend = TRUE)))
+
+png("../Results/MixOmic/MixOmic-heatmap_moreTrx.png", width = 20, height = 25, res = 600, units = "in")
+plot_grid(plotlist = H_l, ncol = 1) # rel_heights = c(1, .7)
+dev.off()
+```
+
+
+```{r simmilarity-plot}
+
+sim_to_edges <- function(sim_matrix, threshold = NULL) {
+  #colnames(sim_matrix) <- make.names(colnames(sim_matrix), unique = TRUE)
+  #rownames(sim_matrix) <- make.names(rownames(sim_matrix), unique = TRUE)
+  colnames(sim_matrix) <- gsub("\\s+", "_", colnames(sim_matrix))
+  rownames(sim_matrix) <- gsub("\\s+", "_", rownames(sim_matrix))
+
+  TR <- colnames(X$TR) %>% gsub("\\s+", "_", .)
+  MB <- colnames(X$MB) %>% gsub("\\s+", "_", .)
+  MG <- colnames(X$MG) %>% gsub("\\s+", "_", .)
+
+  # ---- edges between features ----
+  feature_edges <- sim_matrix %>%
+    as_tibble(rownames = "from") %>%
+    #as.data.frame() %>%
+    #rownames_to_column("from") %>%
+    pivot_longer(-from, names_to = "to", values_to = "weight") %>%
+    mutate(
+      type_from = case_when(from %in% TR ~ "TR", from %in% MB ~ "MB", from %in% MG ~ "MG"),
+      type_to   = case_when(to   %in% TR ~ "TR", to   %in% MB ~ "MB", to   %in% MG ~ "MG")
+    ) %>%
+    filter(from != to) %>%
+    filter(type_from != type_to) %>%     # only cross-block edges
+    
+    # remove duplicates in symmetric matrix:
+    rowwise() %>%
+    mutate(pair = paste(sort(c(from, to)), collapse = "_")) %>%
+    distinct(pair, .keep_all = TRUE) %>%
+    ungroup() %>%
+    select(-pair)
+
+  # Filter weights
+  if (!is.null(threshold)) {
+    feature_edges <- feature_edges %>% filter(weight >= threshold)
+  }
+
+  # ---- vertex table ----
+  vertex_df <- tibble(name = colnames(sim_matrix)) %>%
+    mutate(block = case_when(
+      name %in% TR ~ "TR",
+      name %in% MG ~ "MG",
+      name %in% MB ~ "MB"
+    ))
+
+  # ---- block hierarchy edges ----
+  block_edges <- rbind(
+    data.frame(from = "origin", to = unique(vertex_df$block)),
+    vertex_df %>% rename(from = block, to = name)
+  )
+
+  return(list(
+    edges = block_edges,
+    feature_edges = feature_edges,
+    vertices = vertex_df
+  ))
+}
+
+
+# choose to display corelation values or similarity values 
+# the similarity values are the matrix returned from the circosplot() function
+n <- f %>% map(., ~head(.x, 10)) %>%
+  unlist(.) %>% intersect(colnames(sim_m), .)
+
+n <- f %>% map(., ~head(.x, 10)) %>%
+  unlist(.) %>% intersect(colnames(big_cor), .)
+# sim_matrix <- sim_m
+
+# sim_matrix <- sim_m[n,n]
+sim_matrix <- big_cor[n,n]
+glimpse(sim_matrix)
+edges <- sim_to_edges(sim_matrix[n,n], 0.4)
+
+
+# expand vertex table to include meta nodes: origin + block names
+vertices <- edges$vertices %>%
+  bind_rows(
+    tibble(
+      name = c("origin", unique(edges$vertices$block)),
+      block = NA
+    )
+  )
+
+
+#Let's add information concerning the label we are going to add: angle, horizontal adjustement and potential flip
+#calculate the ANGLE of the labels
+vertices$id <- NA
+myleaves <- which(is.na( match(vertices$name, edges$from) ))
+nleaves <- length(myleaves)
+vertices$id[ myleaves ] <- seq(1:nleaves)
+vertices$angle <- 90 - 360 * vertices$id / nleaves
+ 
+# calculate the alignment of labels: right or left
+# If I am on the left part of the plot, my labels have currently an angle < -90
+vertices$hjust <- ifelse( vertices$angle < -90, 1, 0)
+ 
+# flip angle BY to make them readable
+vertices$angle <- ifelse(vertices$angle < -90, vertices$angle+180, vertices$angle)
+
+
+mygraph <- igraph::graph_from_data_frame(
+  d = edges$edges,         # hierarchical edges only
+  vertices = vertices
+)
+
+# recalc leaf because adding meta nodes broke original leaf detection
+#V(mygraph)$leaf <- degree(mygraph, mode = "out") == 0
+
+# optional: add feature–feature similarity edges
+# mygraph <- igraph::add_edges(
+#   mygraph,
+#   t(as.matrix(edges$feature_edges[, c("from", "to")]))
+# )
+
+# Convert feature_edges into index form
+from <- match(edges$feature_edges$from, V(mygraph)$name)
+to   <- match(edges$feature_edges$to,   V(mygraph)$name)
+connect <- edges$feature_edges
+
+p <- ggraph(mygraph, layout = "dendrogram", circular = TRUE) +
+  
+  # similarity bundles
+  geom_conn_bundle(
+    data = get_con(from = from, to = to, value = connect$weight),
+    aes(alpha = value, color = value),
+    tension = 0.6,      # adjust bundling strength
+    width = 0.8
+  ) +
+  
+  # features at the periphery
+  geom_node_point(aes(filter = leaf, x = x*1.05, y = y*1.05,
+                      color = block), size = 2) +
+  
+  # optional text labels
+  geom_node_text(aes(x = x*1.25, y = y*1.05, filter = leaf, label=name)) +
+  # geom_node_text(aes(x = x, y=y, filter = leaf, label=name, 
+  #               angle = angle, 
+  #               hjust=hjust, 
+  #               colour=block), size=2, alpha=1) +
+  coord_cartesian(clip = "off") +
+  
+  #scale_color_viridis_c(option = "B") +
+  scale_alpha(range = c(0.1, 0.8)) +
+  theme_void() +
+  theme(
+    #legend.position = "none",
+    plot.margin = unit(c(0, 0, 0, 0), "cm")
+  ) +
+  expand_limits(x = c(-1.5, 1.5), y = c(-1.25, 1.25))
+
+p
+
+```
+
+:::
+
+```{r line-plot}
+#| fig-width: 12
+#| fig-height: 8
+
+# filter genes from trx
+keep_cols <- map(cor_m, ~colSums(.x > 0.5 | .x < -0.5) > 0 ) 
+keep_rows <- map(cor_m, ~rowSums(.x > 0.4 | .x < -0.4) > 0, ) 
+
+cor_m_filt <- cor_m %>% 
+  #map_at(c(1,2), ~.x[keep_rows[[.y]],,  drop = FALSE]) %>%
+  map2(., seq_along(.), ~.x[keep_rows[[.y]],, drop = FALSE] )
+  # map2(., seq_along(.), ~.x[,keep_cols[[.y]], drop = FALSE] )
+  # map2(., seq_along(.), ~.x[keep_rows[[.y]],keep_cols[[.y]], drop = FALSE])
+
+
+map(cor_m_filt, ~dim(.x))
+
+
+feature_list <- list("TR"=keep_rows[[2]], "MG"=keep_rows[[1]], "MB"=keep_rows[[2]]) %>%
+  map(., ~names(.x)[.x])
+
+df_all <- map2(X_filt, feature_list, ~ {
+  .x %>%
+    as_tibble(., rownames = "Sample") %>%
+    pivot_longer(-Sample, names_to = "Feature", values_to = "Value") 
+    #filter(Feature %in% .y)
+}) %>%
+  bind_rows(., .id = "Block") %>%
+  arrange(Value) %>%
+  left_join(., annot_col, by=c("Sample"="svamp_ID")) %>%
+  arrange(`Clinical score (0-5)`) %>%
+  # mutate(
+  #   Sample = fct_reorder(
+  #     Sample,
+  #     if_else(Feature == f[["TR"]][1], Value, NA_real_),
+  #     .fun = mean, .na_rm = TRUE,
+  #     na.rm = TRUE))
+  mutate(Sample = fct_reorder(Sample, Value, .fun = mean), .by = Sample)
+  #mutate(Sample = factor(Sample, levels = unique(.$Sample)) )
+
+# filter max an min Trx genes
+get_top_features <- function(df, block_name) {
+  # Filter for the specified block
+  df_block <- df %>% filter(Block == block_name) 
+  # Get min features per Sample
+  min_f <- df_block %>%
+    slice_min(Value, n = 1, with_ties = FALSE, by = "Sample") %>%
+    pull(Feature) %>%
+    unique()
+  # Get max features per Sample
+  max_f <- df_block %>%
+    slice_max(Value, n = 1, with_ties = FALSE, by = "Sample") %>%
+    pull(Feature) %>%
+    unique()
+  # Combine min and max features
+  top_features <- c(min_f, max_f)
+  return(top_features)
+}
+top_TR <- get_top_features(df_all, "TR")
+top_MB <- get_top_features(df_all, "MB")
+
+df_all_ <- df_all %>%
+  filter(Block != "MB" | Feature %in% top_MB) %>%
+  filter(Block != "TR" | Feature %in% top_TR)
+
+new_pal <- c(pal2, "gray", Red)
+
+ggplot(df_all_, aes(x = Sample, y = Value, color = Block, group = Feature)) +
+  geom_line() +
+  # First annotation
+  geom_tile(
+    data = annot_col, 
+    aes(x = svamp_ID, y = -5, fill = group),
+    inherit.aes = FALSE, height = 0.2) + 
+  # Second annotation
+  geom_tile(
+    data = annot_col,      # <-- your new annotation data
+    aes(x = svamp_ID, y = -4.7, fill = `Clinical score (0-5)`),   # different variable & y position
+    inherit.aes = FALSE,
+    height = 0.2
+  ) +
+  coord_cartesian(expand = F) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  scale_colour_manual(values = feat) +
+  scale_fill_manual(values = new_pal) +
+  ggtitle("Selected Features Across All Blocks") 
+```
+
+::: {.panel-tabset}
+
+```{r}
+p_list <- df_all_ %>%
+  left_join(., annot_col, by = c("Sample"="svamp_ID", "Clinical score (0-5)")) %>%
+  split(~Block) %>%
+  map(~ggplot(.x, aes(x = `Clinical score (0-5)`, y = Value, fill = `Clinical score (0-5)`)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1, outlier.size = 0.5) +
+  facet_wrap(~ Feature, scales = "free_y") +
+  scale_fill_manual(values = Red) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    #axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(size = 10))
+  )
+
+
+
+```
+
+## Metabolomics
+
+```{r}
+#| fig-width: 10
+#| fig-height: 8
+p_list[[1]]
+```
+
+## Metagenomics
+
+```{r}
+#| fig-width: 10
+#| fig-height: 8
+p_list[[2]]
+```
+
+## Transcriptomics
+
+```{r}
+#| fig-width: 10
+#| fig-height: 8
+p_list[[3]]
+```
+
+:::
+
+
+```{r ROC-plot}
+#| eval: false
+#| fig-width: 8
+#| fig-height: 5
+
+png("../Results/MixOmic/ROC.png", width = 8, height = 4, res = 600, units = "in")
+auc.mod <- auroc(diablo.mod, roc.block = "MB", roc.comp = 2,
+                print = F)
+dev.off()
+
+```
+
+![ROC](../Results/MixOmic/ROC.png)
+
+## References
+1.  https://doi.org/10.1002/mnfr.202000647
