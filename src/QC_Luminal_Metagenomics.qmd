@@ -49,7 +49,7 @@ format:
 # LOAD LIBRARIES #
 ##################
 library(tidyverse)
-library(mixOmics) 
+library(mixOmics)
 library(readxl)
 library(cowplot)
 library(RColorBrewer)
@@ -61,7 +61,15 @@ map <- purrr::map
 # COLOUR PALLET #
 #################
 pal <- c("#902267", "#ffa998", "#f588af", "gray") # #e05e85
-pal2 <- c("#f26386", "#f588af",  "#a4d984", "#5f983cff", "#fbbc52", "#fd814e", "gray") 
+pal2 <- c(
+  "#f26386",
+  "#f588af",
+  "#a4d984",
+  "#5f983cff",
+  "#fbbc52",
+  "#fd814e",
+  "gray"
+)
 
 # setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
 
@@ -86,18 +94,31 @@ https://mixomics.org/mixmc/mixmc-preprocessing/
 data_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/Tidy_data/Metagenomics/Metageonome_all_vagswab_metaphlan.csv"
 count_info_vagswab_path <- "../Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv"
 meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
+meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp_FINAL.xlsx"
 
 #############
 # LOAD DATA #
 #############
-data <- read_csv(data_path) 
+data <- read_csv(data_path)
 count_info_vagswab <- read_csv(count_info_vagswab_path)
 meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1, na = "na")
+meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 0, na = "na")
 ```
 
 ```{r group-assignment}
+g <- c(
+  "0" = "0-1",
+  "1" = "0-1",
+  "2" = "2-3",
+  "3" = "2-3",
+  "4" = "4-5",
+  "5" = "4-5"
+)
+
 gr_data <- meta_data %>%
-    rename(`Symptom score (0-5)` = "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren") %>%
+  rename(
+    `Symptom score (0-5)` = "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren"
+  ) %>%
   select(
     svamp_ID,
     `Clinical score (0-5)`,
@@ -106,32 +127,45 @@ gr_data <- meta_data %>%
     `Symptom score (0-5)`,
     `Recurring fungal infections > 2/year (y/n)`
   ) %>%
-    mutate(
-  group = case_when(
-    `Fungal culture: C. albicans (y/n)` == "1" &
-      `Symptom score (0-5)` >= 1 &
-      `Recurring fungal infections > 2/year (y/n)` == "1" ~
-      "RVVCpos",
+  mutate(
+    group = case_when(
+      `Fungal culture: C. albicans (y/n)` == "1" &
+        `Symptom score (0-5)` >= 1 &
+        `Recurring fungal infections > 2/year (y/n)` == "1" ~
+        "RVVCpos",
 
-    `Fungal culture: C. albicans (y/n)` == "0" &
-      `Recurring fungal infections > 2/year (y/n)` == "1" ~
-      "RVVCneg",
+      `Fungal culture: C. albicans (y/n)` == "0" &
+        `Recurring fungal infections > 2/year (y/n)` == "1" ~
+        "RVVCneg",
 
-    `Fungal culture: C. albicans (y/n)` == "1" &
-      `Symptom score (0-5)` == 0 ~
-      "AS",
+      `Fungal culture: C. albicans (y/n)` == "1" &
+        `Symptom score (0-5)` == 0 ~
+        "AS",
 
-    `Fungal culture: C. albicans (y/n)` == "0" &
-      `Recurring fungal infections > 2/year (y/n)` == "0" ~
-      "Control",
+      `Fungal culture: C. albicans (y/n)` == "0" &
+        `Recurring fungal infections > 2/year (y/n)` == "0" ~
+        "Control",
 
-    `Fungal culture: C. albicans (y/n)` == "1" &
-      `Recurring fungal infections > 2/year (y/n)` == "0" ~
-      "Candidapos",
+      `Fungal culture: C. albicans (y/n)` == "1" &
+        `Recurring fungal infections > 2/year (y/n)` == "0" ~
+        "Candidapos",
 
-    TRUE ~ NA_character_
-  )
-) %>%
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(
+    pos = case_when(
+      `Fungal culture: C. albicans (y/n)` == "1" |
+        `Fungal culture: Non-albicans candida spp. (y/n)` == 1 ~
+        "pos",
+      TRUE ~ "neg"
+    ),
+    .after = "group"
+  ) %>%
+  mutate(
+    Clin_gr = g[as.character(.$`Clinical score (0-5)`)],
+    .after = "group"
+  ) %>%
   select("svamp_ID", group, everything())
 
 
@@ -152,7 +186,7 @@ count_info_vagswab %>%
 
 # remove samples with low read count
 data <- data %>%
-    select( -S10) # removes ctrl and extra samples
+  select(-S10) # removes ctrl and extra samples
 ```
 
 ## Step 3: Taxonomical-filtering
@@ -165,14 +199,20 @@ keep taxa with at least 0.005% in at least 6% (6 out of 93) of samples, or at le
 ###########################
 t <- set_names(taxonomy, seq_along(taxonomy))
 data <- data %>%
-    select( -contains("ex"), -contains("seq"), -contains("_run2"), -starts_with("KX")) %>% # removes ctrl and extra samples
-    #select(-matches("_1W|_3M|_6M")) %>%
-    mutate(
-        level = factor(
-            t[as.character(str_count(clade_name, "\\|") + 1)],
-            levels = taxonomy),
-            .after = "clade_name"
-            ) 
+  select(
+    -contains("ex"),
+    -contains("seq"),
+    -contains("_run2"),
+    -starts_with("KX")
+  ) %>% # removes ctrl and extra samples
+  #select(-matches("_1W|_3M|_6M")) %>%
+  mutate(
+    level = factor(
+      t[as.character(str_count(clade_name, "\\|") + 1)],
+      levels = taxonomy
+    ),
+    .after = "clade_name"
+  )
 
 n_samples <- select(data, starts_with("S")) %>% ncol() # number of good samples
 n_samples
@@ -181,7 +221,7 @@ n_samples
 
 # --- Step 1. split clade name into seperate columns
 temp <- data %>%
-    separate(
+  separate(
     col = clade_name,
     into = taxonomy,
     sep = "\\|",
@@ -284,7 +324,12 @@ data_filt %>%
   #select(clade_name, level, S10) %>%
   filter(level == "family") %>%
   select(-clade_name, -level) %>%
-  colSums() %>% {. ->> colsums} %>% enframe() %>% arrange(value)
+  colSums() %>%
+  {
+    . ->> colsums
+  } %>%
+  enframe() %>%
+  arrange(value)
 
 colsums
 colsums[colsums <= 60]
@@ -294,18 +339,18 @@ indx <- which(data_filt < 0, arr.ind = TRUE)
 
 if (nrow(indx) > 0) {
   neg_report <- tibble(
-    neg    = map2_dbl(indx[,1], indx[,2], ~ data_filt[[.x, .y]]),
-    remove = map2_dbl(indx[,1], indx[,2], ~ data[[.x, .y]]),  # original value from data
-    col    = map_chr(indx[,2], ~ colnames(data)[.x]),         # column name
-    tax    = map_chr(indx[,1], ~ data[[.x, 1]])               # taxon/clade name
+    neg = map2_dbl(indx[, 1], indx[, 2], ~ data_filt[[.x, .y]]),
+    remove = map2_dbl(indx[, 1], indx[, 2], ~ data[[.x, .y]]), # original value from data
+    col = map_chr(indx[, 2], ~ colnames(data)[.x]), # column name
+    tax = map_chr(indx[, 1], ~ data[[.x, 1]]) # taxon/clade name
   )
-  
+
   message("Negative values found and replaced with 0:")
   print(neg_report)
 
   # --- Step 7: replace negatives with zero ---
   data_filt <- data_filt %>%
-  mutate(across(where(is.numeric), ~ pmax(.x, 0)))
+    mutate(across(where(is.numeric), ~ pmax(.x, 0)))
 }
 
 # test
@@ -345,8 +390,50 @@ data_filt_norm
 # data_filt_norm <- read_csv("../Results/Tissue_QC/Metageonome_all_vagswab_metaphlan_taxa_filt.csv")
 ```
 
+## Step 4: Simplify clade names
 
-## Step 4: Centered Log Ratio (CLR) Transformation
+Now we want to simplify the `clade_name` column so that:
+
+- For **phylum / class / order / family / genus**, only the relevant level is kept.
+- For **species** and **strain**, all levels are incuded down from genus,  
+  i.e. `"Genus species"` or `"Genus species strain"`.
+  
+```{r simplify-clade_name}
+# string manipulation
+
+# data_filt_norm <- read_csv("../Results/Tissue_QC/Metageonome_all_vagswab_metaphlan_taxa_filt.csv")
+
+# Modify taxa labels
+data_filt_norm <- data_filt_norm %>%
+  mutate(
+    taxa = str_extract_all(
+      clade_name,
+      "(?<=k__|p__|c__|o__|f__|g__|s__|t__)[^|]+"
+    ),
+    taxa = map2_chr(
+      taxa,
+      level,
+      ~ {
+        if (.y %in% c("species", "strain")) {
+          # keep everything from genus onward
+          start <- which(
+            c("k", "p", "c", "o", "f", "g", "s", "t") %in% substr(.y, 1, 1)
+          )
+          paste(.x[start:length(.x)], collapse = " ")
+        } else {
+          # keep only the last element (current level)
+          tail(.x, 1)
+        }
+      }
+    ),
+    .after = "level"
+  ) %>%
+  select(-clade_name) %>%
+  rename(clade_name = taxa)
+```
+
+
+## Step 5: Centered Log Ratio (CLR) Transformation
 For technical, biological and computational reasons, microbiome data is compositional such that they represent proportions or relative information. Proportional data are restricted to a space where the sum of all OTU proportions for a given sample sums to 1. Using standard statistical methods on such data may lead to spurious results. Likewise, any data that are compositional in nature are interpreted into relative counts. Hence, using a CLR transformation allows the circumvention of these spurious results.
 
 There are two ways of log-ratio transforming the data in mixOmics:
@@ -370,52 +457,16 @@ unlike 16S data which are returned as raw counts after pre-processing, shotgun m
 - Relative abundance (%) of taxa  
 - RPKM / TPM / CPM for genes or functions 
 
-
-## Step 3: Simplify clade names
-
-Now we want to simplify the `clade_name` column so that:
-
-- For **phylum / class / order / family / genus**, only the relevant level is kept.
-- For **species** and **strain**, all levels are incuded down from genus,  
-  i.e. `"Genus species"` or `"Genus species strain"`.
-```{r simplify-clade_name}
-# string manipulation
-
-# data_filt_norm <- read_csv("../Results/Tissue_QC/Metageonome_all_vagswab_metaphlan_taxa_filt.csv")
-
-# Modify taxa labels 
-data_filt_norm <- data_filt_norm %>%
-  mutate(
-    taxa = str_extract_all(clade_name, "(?<=k__|p__|c__|o__|f__|g__|s__|t__)[^|]+"),
-    taxa = map2_chr(taxa, level, ~ {
-      if (.y %in% c("species", "strain")) {
-        # keep everything from genus onward
-        start <- which(c("k","p","c","o","f","g","s","t") %in% substr(.y,1,1))
-        paste(.x[start:length(.x)], collapse = " ")
-      } else {
-        # keep only the last element (current level)
-        tail(.x, 1)
-      }
-    }),
-    .after = "level"
-  ) %>%
-  select(-clade_name) %>%
-  rename(clade_name = taxa)
-```
-
-
-## Step 5: Centered Log Ratio (CLR) Transformation
-
 ```{r create-matrix}
 # Create matrix for all levels of taxa
 # NB! the majority(?) of mixOmics functions expect a format of
-# samples as rows and features as columns, thus the transformation 
+# samples as rows and features as columns, thus the transformation
 # is VERY important!
 matrix <- data_filt_norm %>%
-    #rename_with(~ str_replace(.x, "_BL$", ""), everything()) %>%
-    nest(data = -level) %>%
-    # filter(level == "strain") %>%
-    mutate(
+  #rename_with(~ str_replace(.x, "_BL$", ""), everything()) %>%
+  nest(data = -level) %>%
+  # filter(level == "strain") %>%
+  mutate(
     data = map(
       data,
       ~ .x %>%
@@ -440,16 +491,16 @@ matrix <- matrix %>%
   mutate(
     clr_data = map(data, ~ logratio.transfo(.x, logratio = "CLR", offset = 1))
   ) %>%
-    mutate(across(2:3, ~set_names(.x, paste0(.data[["level"]]))))
+  mutate(across(2:3, ~ set_names(.x, paste0(.data[["level"]]))))
 
 
 ```
 
 ```{r save-CLR-transformed-data}
- matrix %>%
-  select(1,clr_data) %>%
+matrix %>%
+  select(1, clr_data) %>%
   saveRDS(
-  .,
+    .,
     "../Results/MixOmic/Metageonome_vagswab_CLR_transformed.RDS"
   )
 # matrix <- read_csv("../Results/MixOmic/Metageonome_vagswab_CLR_transformed.csv")
@@ -458,19 +509,9 @@ matrix <- matrix %>%
 ## Step 6: Exploratory Unsupervised PCA
 
 ```{r get-new-groups}
-g <- c("0"="0-1", "1"="0-1", "2"="2-3", "3"="2-3", "4"="4-5", "5"="4-5")
-gr <- tibble(ID = colnames(data)[-c(1,2)]) %>% 
-    left_join(., gr_data, by =c("ID"="svamp_ID")) %>%
-    mutate(
-      pos = case_when(
-        `Fungal culture: C. albicans (y/n)` == "1" |
-        `Fungal culture: Non-albicans candida spp. (y/n)` == 1 ~
-        "pos",
-        TRUE ~ "neg"
-        ), .after="group") %>%
-    mutate(`Clinical score (0-5)` = as.character(.$`Clinical score (0-5)`)) %>%
-    mutate(Clin_gr = g[.$`Clinical score (0-5)`], .after ="group") #%>%
-    #filter(!(is.na(.$Clin_gr)))
+
+gr <- tibble(ID = colnames(data)[-c(1, 2)]) %>%
+  left_join(., gr_data, by = c("ID" = "svamp_ID"))
 
 ```
 
@@ -480,23 +521,55 @@ gr <- tibble(ID = colnames(data)[-c(1,2)]) %>%
 matrix <- matrix %>%
   # Filter matrix to only these levels
   filter(level %in% tax_levels) %>%
-  
+
   # Apply CLR transformation and PCA to each level
   mutate(
     #clr_data = map(data, ~ logratio.transfo(.x, logratio = "CLR", offset = 1)),
-    pca_res  = map(clr_data, ~ pca(.x)),
-    plot = map2(pca_res, level, ~plotIndiv(.x, col = pal,
-                group = gr$Clin_gr, ind.names = F, size.title = 9,
-                title = paste0(.y))),
-    plot2 = map2(pca_res, level, ~plotIndiv(.x, col = pal2,
-                group = gr$`Clinical score (0-5)`, ind.names = F, size.title = 9,
-                title = paste0(.y)))
+    pca_res = map(clr_data, ~ pca(.x)),
+    plot = map2(
+      pca_res,
+      level,
+      ~ plotIndiv(
+        .x,
+        col = pal,
+        group = gr$Clin_gr,
+        ind.names = F,
+        size.title = 9,
+        title = paste0(.y)
+      )
+    ),
+    plot2 = map2(
+      pca_res,
+      level,
+      ~ plotIndiv(
+        .x,
+        col = pal2,
+        group = gr$`Clinical score (0-5)`,
+        ind.names = F,
+        size.title = 9,
+        title = paste0(.y)
+      )
+    )
   ) %>%
-    mutate(across(2:5, ~set_names(.x, paste0(.data[["level"]]))))
+  mutate(across(2:5, ~ set_names(.x, paste0(.data[["level"]]))))
 
 # Plot PCA for selected levels
-l <- get_legend(plotIndiv(matrix$pca_res[["genus"]], col = pal, legend = T, group = gr$Clin_gr)$graph)
-l2 <- get_legend(plotIndiv(matrix$pca_res[["genus"]], col = pal2, legend = T, group = gr$`Clinical score (0-5)`)$graph)
+l <- get_legend(
+  plotIndiv(
+    matrix$pca_res[["genus"]],
+    col = pal,
+    legend = T,
+    group = gr$Clin_gr
+  )$graph
+)
+l2 <- get_legend(
+  plotIndiv(
+    matrix$pca_res[["genus"]],
+    col = pal2,
+    legend = T,
+    group = gr$`Clinical score (0-5)`
+  )$graph
+)
 p <- matrix$plot %>% map("graph")
 p2 <- matrix$plot2 %>% map("graph")
 
@@ -506,13 +579,13 @@ p2 <- matrix$plot2 %>% map("graph")
 #| fig-width: 10
 #| fig-height: 7
 plot_grid(
-  plotlist = c(list(l),p),
+  plotlist = c(list(l), p),
   #labels = matrix$level,   # use taxonomy levels as labels
   ncol = 3
 )
 
 plot_grid(
-  plotlist = c(list(l2),p2),
+  plotlist = c(list(l2), p2),
   #labels = matrix$level,   # use taxonomy levels as labels
   ncol = 3
 )
@@ -545,16 +618,16 @@ library(circlize)
 # I dont know if it is more appropriate to use abundanc or CLR normalized data
 
 # CLR
-matrix.h <-  matrix$clr_data$species %>% t()  
+matrix.h <- matrix$clr_data$species %>% t()
 
 # log abundance
 # matrix.h <- matrix.h + 0.0001 %>% log2()
 
 # Filter
-matrix.h <- matrix.h[,gr$ID]
+matrix.h <- matrix.h[, gr$ID]
 
 top <- sort(rowSums(t(matrix$data$species)), decreasing = T)[1:50]
-matrix.h <- matrix.h[names(top),]
+matrix.h <- matrix.h[names(top), ]
 
 dim(matrix.h)
 ```
@@ -564,21 +637,28 @@ dim(matrix.h)
 # ANNOTATION #
 ##############
 # colour pallets
-blue <- brewer.pal(6, name = "Blues") 
-purple <- brewer.pal(6, name = "Purples") 
+blue <- brewer.pal(6, name = "Blues")
+purple <- brewer.pal(6, name = "Purples")
 reds <- brewer.pal(6, name = "Reds")
 
-Red <- brewer.pal(6, name = "Reds") %>% c(., "gray") 
-pal <- c("#f26386",  "#a4d984", "#fbbc52", "gray") # "#f588af", "#fd814e" 
-pal2 <- c("#2266ac", "#91c5de", "gray")
+Red <- brewer.pal(6, name = "Reds") %>% c(., "gray")
+pal <- c("#f26386", "#a4d984", "#fbbc52", "gray") # "#f588af", "#fd814e"
+pal2 <- c("#2266ac", "#91c5de", "gray", "gray")
+pal3 <- c("#9e8dec", "#902267", "#cc93cf", "#a5c97b", "#de9548", "gray") #"#abcb4b" "#63d3b4"
 
-# group information 
-cols <- c("Clin_gr", "Clinical score (0-5)", "Fungal culture: C. albicans (y/n)") %>% set_names()
+
+# group information
+cols <- c(
+  "Clin_gr",
+  "group",
+  "Clinical score (0-5)",
+  "Fungal culture: C. albicans (y/n)"
+) %>%
+  set_names()
 lvls <- map(cols, ~ c(sort(unique(gr[[.x]])), "na"))
 
 annot_col <- gr %>%
-  mutate(across(all_of(cols),
-                ~ factor(.x, levels = lvls[[cur_column()]])))
+  mutate(across(all_of(cols), ~ factor(.x, levels = lvls[[cur_column()]])))
 
 # check samples number
 dim(matrix.h)
@@ -586,74 +666,91 @@ dim(annot_col)
 
 # top annotation object:
 top_annot <- columnAnnotation(
-  Groups = annot_col$Clin_gr,
-  Clin = annot_col$`Clinical score (0-5)`,
+  Clin_gr = annot_col$Clin_gr,
+  Groups = annot_col$group,
   Culture = annot_col$`Fungal culture: C. albicans (y/n)`,
+  Clin = annot_col$`Clinical score (0-5)`,
   #show_legend = FALSE,
   show_annotation_name = T,
   annotation_name_gp = gpar(fontsize = 8),
   annotation_legend_param = list(
-    grid_height = unit(.1, "mm"), 
-    grid_width = unit(2, "mm"), 
-    title = "", labels_gp = gpar(fontsize = 7), 
-    title_gp = gpar(fontsize = 8)),
+    grid_height = unit(.1, "mm"),
+    grid_width = unit(2, "mm"),
+    title = "",
+    labels_gp = gpar(fontsize = 7),
+    title_gp = gpar(fontsize = 8)
+  ),
   simple_anno_size = unit(.3, "cm"),
   #gap = unit(1, "cm"),
-  col=list( Clin=set_names(Red, levels(annot_col$`Clinical score (0-5)`)),
-            Groups=set_names(pal, levels(annot_col$Clin_gr)),
-            Culture=set_names(pal2, levels(annot_col$`Fungal culture: C. albicans (y/n)`)))
-            )
+  col = list(
+    Clin = set_names(Red, levels(annot_col$`Clinical score (0-5)`)),
+    Clin_gr = set_names(pal, levels(annot_col$Clin_gr)),
+    Culture = set_names(
+      pal2,
+      levels(annot_col$`Fungal culture: C. albicans (y/n)`)
+    ),
+    Groups = set_names(pal3, levels(annot_col$group))
+  )
+)
 
 ```
 
 
 
 ```{r heatmap-color-scale}
-#| fig-cap: "Figure 3: Histogram showing the distribution of z-score normalized matrix values"
+#| fig-cap: "Figure 3: Histogram showing the distribution of CLR normalized matrix values"
+#| fig-width: 10
+#| fig-height: 5
 ################
 # PLOT HEATMAP #
 ################
 # colour mapping
-breaks.fun <- function(min, max, n){
+breaks.fun <- function(min, max, n) {
   x <- seq(min, max, length.out = n)
   x[which(x == median(x))] <- 0
   round(x)
-  return(x)}
+  return(x)
+}
 
 q <- quantile(matrix.h, probs = seq(0, 1, 0.1))
 # to better know what values to use for the legend
 # we use the quantile() function to get appropriate limits
-# we plot the distribution of values 
+# we plot the distribution of values
 # Convert to a data frame for ggplot
 df <- data.frame(value = as.vector(matrix.h))
 
 # Basic ggplot histogram
-ggplot(df, aes(x = value)) +
-  geom_histogram( fill = "skyblue", color = "skyblue") +
+p <- ggplot(df, aes(x = value)) +
+  geom_histogram(fill = "skyblue", color = "skyblue") +
   #scale_x_continuous(breaks = scales::breaks_pretty(n = 20)) +
   #scale_y_continuous(labels = label_comma()) + # <-- commas
   labs(
     title = "Distribution of Matrix Values",
     x = "Matrix Values",
     y = "Count"
-  ) +  
+  ) +
   theme_minimal(base_size = 14)
 
 # plot to better see the outlier values
-ggplot(df, aes(x = value)) +
-  geom_histogram(fill = "skyblue", color = "skyblue") +
-  #scale_x_continuous(breaks = scales::breaks_pretty(n = 20)) +
-  labs(
-    title = "Distribution of Matrix Values",
-    x = "Matrix Values",
-    y = "Count"
-  )  + ylim(0,10) +
-  theme_minimal(base_size = 14)
+p2 <- p + ylim(0, 10)
+plot_grid(p, p2, ncol = 2)
 
 # set limits for colourpallet
-RdBu = c("#364B9A", "#4A7BB7", "#6EA6CD", "#98CAE1", "#C2E4EF", "white", "#FEDA8B", "#FDB366", "#F67E4B", "#DD3D2D", "#A50026")
+RdBu = c(
+  "#364B9A",
+  "#4A7BB7",
+  "#6EA6CD",
+  "#98CAE1",
+  "#C2E4EF",
+  "white",
+  "#FEDA8B",
+  "#FDB366",
+  "#F67E4B",
+  "#DD3D2D",
+  "#A50026"
+)
 
-# using min and max from the matrix matrix can work, but is usualy influenced too much 
+# using min and max from the matrix matrix can work, but is usualy influenced too much
 # from the min and max values which tend to be outliers
 # col <- colorRamp2(breaks.fun(min(matrix.h), max(matrix.h), 7), colorRampPalette(c(RdBu))(7))
 
@@ -679,20 +776,21 @@ ht_opt$TITLE_PADDING = unit(.05, "cm")
 ht_opt$DIMNAME_PADDING = unit(.05, "cm")
 
 # average expression:
-H <- Heatmap(matrix.h,
-             col = blue, 
-             cluster_columns = TRUE,
-             show_row_dend = FALSE,
-             name="CLR", 
-             show_row_names = T, 
-             show_column_names = TRUE, 
-             column_names_gp = grid::gpar(fontsize = 8),
-             row_names_gp = grid::gpar(fontsize = 8),
+H <- Heatmap(
+  matrix.h,
+  col = blue,
+  cluster_columns = TRUE,
+  show_row_dend = FALSE,
+  name = "CLR",
+  show_row_names = T,
+  show_column_names = TRUE,
+  column_names_gp = grid::gpar(fontsize = 8),
+  row_names_gp = grid::gpar(fontsize = 8),
 
-            # annotation
-             # right_annotation = right_anno_row, left_annotation = left_anno_row,
-             top_annotation = top_annot
-                                          ) 
+  # annotation
+  # right_annotation = right_anno_row, left_annotation = left_anno_row,
+  top_annotation = top_annot
+)
 H
 
 pdf(file = "./Heatmap_gene_expression.pdf", width = 10, height = 7)
