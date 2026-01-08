@@ -1,6 +1,6 @@
 # Candida-omics
 
-🚧 *Work in Progress* 🚧  
+*Work in Progress*
 
 This repository contains analysis pipelines and resources for **multi-omic integration** of data from our study on **recurrent vulvovaginal candidiasis (RVVC)** — commonly known as recurrent vaginal yeast infection.  
 
@@ -11,7 +11,7 @@ This repository contains analysis pipelines and resources for **multi-omic integ
 Recurrent vulvovaginal candidiasis (RVVC) affects **5%–10% of women**, significantly impacting reproductive health and quality of life.  
 
 An introduction to the cohort and our investigation of bulk transcriptomics data can be found here:  
-👉 [DOI: 10.1111/aji.70040](https://doi.org/10.1111/aji.70040)
+ [DOI: 10.1111/aji.70040](https://doi.org/10.1111/aji.70040)
 
 ---
 
@@ -19,11 +19,10 @@ An introduction to the cohort and our investigation of bulk transcriptomics data
 
 This repository will bring together multiple omics layers generated from the same cohort, including:
 
-- 🧬 Bulk transcriptomics  
-- 🦠 Shotgun metagenome sequencing  
-- 💊 Metabolomics  
-- 🗺️ Spatial transcriptomics  
-- 🩺 Clinical data  
+-  Bulk transcriptomics  
+-  Shotgun metagenome sequencing  
+-  Metabolomics   
+-  Clinical data  
 
 ---
 
@@ -41,6 +40,8 @@ This repository will bring together multiple omics layers generated from the sam
 2. [FS-Metabolome](https://vildeka.github.io/Candida-omics/Feature_Selection_Metabolomics)
 3. [FS-Transcriptome](https://vildeka.github.io/Candida-omics/Feature_selection_Transcriptomics)
 
+### Unsupervised Factor Analysis (MOFA)
+1. [MOFA](https://vildeka.github.io/Candida-omics/MOFA)
 *(More analysis pipelines and results will be added as the project progresses.)*
 
 ---
