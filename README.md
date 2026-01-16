@@ -42,6 +42,15 @@ This repository will bring together multiple omics layers generated from the sam
 
 ### Unsupervised Factor Analysis (MOFA)
 1. [MOFA](https://vildeka.github.io/Candida-omics/MOFA)
+
+### Supervised sPLS-DA Analysis (DIABLO)
+1. [sPLS-DA-Metagenome](https://vildeka.github.io/Candida-omics/src/Feature_selection_Metagenomics)
+2. [sPLS-DA-Metagenome](https://vildeka.github.io/Candida-omics/src/Feature_Selection_Metabolomics)
+3. [sPLS-DA-Metagenome](https://vildeka.github.io/Candida-omics/src/Feature_selection_Transcriptomics)
+
+4. [01_DIABLO-Prepp](https://vildeka.github.io/Candida-omics/src/01_DIABLO_prepp)
+5. [01_DIABLO-models](https://vildeka.github.io/Candida-omics/src/02_DIABLO_models)
+
 *(More analysis pipelines and results will be added as the project progresses.)*
 
 ---

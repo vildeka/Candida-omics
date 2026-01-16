@@ -1,0 +1,679 @@
+---
+title: "DIABLO mixOmics integration"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html: 
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+      caption: Code
+params:
+  sparse: false
+---
+
+# <!-- Step 1-5 -->
+
+## Overview: 
+#### DIABLO Multi-Omics Integration
+
+1. **Load already QC and normalized data**  
+   Clean, normalize, and scale each omics dataset independently.
+
+2. **Select taxa level and combine X**  
+   Use PLS-DA to confirm that class separation exists before applying sparsity.
+
+3. **Identify sample sets**  
+   Identify the optimal number of components (`ncomp`) and variables to select per component (`keepX`) via cross-validation.
+
+4. **Select response variable**  
+   Build the sPLS-DA model using the tuned parameters.
+
+5. **Specify design matrix**  
+   Evaluate classification accuracy, balanced error rate (BER), and stability of selected variables.
+
+6. **Model**  
+   Retrieve the most discriminant variables identified by the sPLS-DA model.
+
+7. **Visualize models**  
+   Use the selected features as input for integration frameworks such as **DIABLO** (`block.splsda()`).
+
+
+## parameter tuning
+
+There are several variables that wee kan tweak in order to optimise our integration model
+these include
+- weights
+- number of blocks
+- species or strain level of MG
+- number of features to select for tuning
+
+I want to test a couple of combinations to see if there are any signifcant changes
+
+## <!-- Intro -->
+<!-- https://examples.quarto.pub/create-tabsets-panel-from-r-code/ -->
+
+## 1. Load already QC and normalized data
+
+```{r Libraries}
+#| code-fold: true
+#| output: false
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(mixOmics)
+library(readxl)
+library(cowplot)
+library(RColorBrewer)
+library(scales)
+
+library(VennDiagram)
+library(gridExtra)
+library(ComplexHeatmap)
+library(circlize)
+
+library(tidygraph)
+library(igraph)
+library(ggraph)
+select <- dplyr::select
+map <- purrr::map
+
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
+
+# pal <- c("#ffa998", "#f588af", "#902267") # #e05e85
+# feat <- c("#bdd3c5", "#48919d", "#3d4b6eff") # "#1f2e55", "#c6cdf7"
+# pal <- c("#d18ac8", "#3db8ac", "#8861d2", "#6095d7", "#755fa3", "#c44999")
+feat <- c("#e39ddaff", "#6dded3ff", "#a68cd5ff") #,"#6095d7","#755fa3","#c44999")
+
+# pal <- c("#9e8dec", "#902267", "#cc93cf", "#a5c97b", "#de9548", "#63d3b4") #"#abcb4b"
+
+pal <- list(
+  subCST = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273'
+  ),
+  Clin = c("#a5c97b", "#cc93cf", "#de9548", "#63d3b4", "#9e8dec", "#902267"),
+  Clin_bin = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_AS = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_pos = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267"
+  ),
+  metab_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273'
+  ),
+  microb_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267"
+  ),
+  integ_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#984EA3"
+    #"#B3CDE3"
+  ),
+  "Wet_smear:_clue_cells_(y/n)" = c("#2266ac", "#91c5de"),
+  hyphae = c("#f26386", "#fd814e", "#a4d984", "#fbbc52"),
+  pos = c("#2266ac", "#91c5de"),
+  "Clinical_score_(0-5)" = brewer.pal(6, name = "Reds")
+)
+```
+
+```{r Load-data}
+#| output: false
+data_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/Tidy_data/Metagenomics/Metageonome_all_vagswab_metaphlan.csv"
+# meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
+
+#############
+# LOAD DATA #
+#############
+
+# Metagenomics
+MG_matrix <- readRDS(
+  "../Results/MixOmic/Metageonome_vagswab_CLR_transformed.RDS"
+)
+MG_select <- read_csv("../Results/MixOmic/Var_selected_Metageonome.csv")
+
+# metabolomics
+MB_matrix <- read_csv("../Results/MixOmic/Metabolom_Normalized.csv")
+MB_select <- read_csv("../Results/MixOmic/Var_selected_Metabolome.csv")
+
+# Transcriptomics
+TRX_batch <- read_csv("../Results/MixOmic/Transcriptomics_batch_filt.csv")
+TR_matrix <- read_csv("../Results/MixOmic/Transcriptomics_Normalized.csv")
+TR_matrix <- read_csv("../Results/MixOmic/Transcriptomics_Norm_NO_FILT.csv")
+TR_select <- read_csv("../Results/MixOmic/Var_selected_Transcriptomics.csv")
+TR_matrix <- TRX_batch
+
+#############
+# LOAD META #
+#############
+meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp_FINAL.xlsx"
+CST_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv"
+m_clus_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src/Paulo/results/microb_metab_clustering.csv"
+
+meta_data <- read_xlsx(meta_path, sheet = "Metadata")
+meta_groups <- read_csv("../Results/meta_int_groups.csv")
+CST_info <- read_csv(CST_path) %>% dplyr::select(svamp_ID, CST, subCST)
+metab_clus <- read.csv(m_clus_path, row.names = 1)
+
+```
+
+## 2. Preparing multi-omics matrices
+
+### Steps for preparing multi-omics matrices (TR, MG, MB)
+
+1. **Remove unwanted taxa**  
+   - For MG data, drop columns whose taxa names match a set of regular expressions  
+     (e.g., remove Candida/fungi using regex patterns).
+
+2. **Select a taxonomic level for MG**  
+   - Choose one level from the `clr_data` list (species, genus, family, etc.).
+
+3. **Orient all matrices so that samples are rows**  
+   - TR and MB may need to be transposed and converted into matrices.
+   - MG is already sample × feature.
+
+4. **Compute the intersection of shared samples**  
+   - Extract row names from TR, MG, and MB and identify samples common to all layers.
+
+5. **Subset all matrices to include only overlapping samples**  
+   - Ensures all omics blocks have the same sample set and can be correlated.
+
+6. **Return the cleaned and aligned omics list**  
+   - The final list contains `X$TR`, `X$MG`, and `X$MB`, all with identical sample ordering.
+
+Note, S15 and S10 was filtered out from the luminal metagenomics data, One due to low total count and one had less than 60% of taxa left after filtering.
+```{r define-X}
+
+# k__Eukaryota|p__Ascomycota|c__Saccharomycetes|o__Saccharomycetales|f__Debaryomycetaceae|g__Candida|s__Candida_albicans
+reg <- c(
+  "kingdom" = "",
+  "phylum" = "Ascomycota",
+  "class" = "Saccharomycetes",
+  "order" = "Saccharomycetales",
+  "family" = "Debaryomycetaceae",
+  "genus" = "Candida",
+  "species" = "Candida_albicans|Candida_parapsilosis|Candida_dubliniensis",
+  "strain" = "Candida_albicans EUK5476|Candida_parapsilosis EUK5480|Candida_dubliniensis EUK42374|Candida_glabrata EUK5478"
+)
+
+# Section One ---------
+
+prep_multi_omics <- function(
+  taxa_level = "species",
+  remove_regex_list = NULL
+) {
+  # ---- 1. Remove unwanted taxa (candida) from MG ----
+  if (!is.null(remove_regex_list)) {
+    MG_matrix <- MG_matrix %>%
+      mutate(across(
+        clr_data,
+        ~ imap(
+          .,
+          ~ .x[, !grepl(remove_regex_list[[.y]], colnames(.x)), drop = FALSE]
+        )
+      ))
+  }
+
+  # ---- 2. Select taxa level ----
+  X <- list(
+    TR = TR_matrix,
+    MG = MG_matrix[["clr_data"]][[taxa_level]],
+    MB = MB_matrix
+  )
+
+  # ---- 3. Ensure correct orientation (samples = rows) ----
+  X <- X %>%
+    map_at(c("TR", "MB"), ~ data.frame(.x, row.names = 1)) %>% # add rownames
+    map_at(c("TR", "MB"), t) %>% # transpose: samples → rows
+    map(., ~ as.matrix(.x))
+
+  # ---- 4. Compute intersection of sample IDs across all datasets ----
+  ids_all <<- map(X, rownames)
+
+  clin <- c("_1W", "_3M", "_6M", "KX\\d\\d")
+  X <- X %>%
+    # remove follow up samples
+    map(., ~ .x[!(grepl(paste0(clin, collapse = "$|"), rownames(.x))), ])
+
+  ids <<- map(X, rownames)
+  ids_uniq <<- Reduce(intersect, map(X, rownames))
+
+  # ---- 5. Subset each matrix to baseline only and overlapping samples ----
+  X <- X %>% map(~ .x[ids_uniq, , drop = FALSE])
+
+  return(X)
+}
+X <- c("species", "strain") %>%
+  set_names(.) %>%
+  map(., ~ prep_multi_omics(taxa_level = .x, remove_regex_list = reg))
+
+map(X$strain, ~ dim(.x))
+```
+
+
+### Get group assignment
+```{r combine_meta_info}
+metab_clus <- metab_clus %>%
+  as_tibble(., rownames = "svamp_ID") %>%
+  dplyr::select(svamp_ID = 1, ends_with("_louvain")) %>%
+  mutate_at(., 2:ncol(.), factor)
+
+meta_data <- meta_data %>%
+  dplyr::select(
+    svamp_ID,
+    38:42,
+    22,
+    24:25,
+    54,
+    starts_with("Clinical score")
+  )
+
+meta <- meta_groups %>%
+  left_join(metab_clus, by = "svamp_ID") %>%
+  left_join(CST_info, by = "svamp_ID") %>%
+  left_join(meta_data, by = "svamp_ID") %>%
+  rename_with(~ gsub(" ", "_", .x)) %>%
+  mutate(
+    Lacto = ifelse(
+      CST == "I",
+      "Lacto_c",
+      ifelse(CST == "III", "Lacto_i", "other")
+    )
+  ) %>%
+  mutate(RVVC_pos = paste(group_2, pos, sep = "_"), .after = "RVVC_AS") %>%
+  mutate("Clinical_score_(0-5)" = as.character(`Clinical_score_(0-5)`))
+
+write_csv(
+  meta,
+  "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/Results/meta_all_info.csv"
+)
+```
+
+```{r specify-response-variable}
+gr <- meta %>%
+  filter(svamp_ID %in% ids_uniq)
+
+# group distribution
+vars <- c(
+  "Clinical_score_(0-5)",
+  "Clin_gr",
+  "group",
+  "hyphae",
+  "RVVC_AS",
+  "group_cross"
+) %>%
+  set_names()
+map(vars, ~ table(gr[[.x]]))
+
+# specify Y
+Y <- factor(as.character(gr$`Clinical_score_(0-5)`))
+Y <- factor(as.character(gr$Clin_gr))
+
+Y <- c("Clinical_score_(0-5)", "Clin_gr", "RVVC_AS") %>%
+  set_names(., c("Clin", "Clin_bin", "RVVC_AS")) %>%
+  map(., ~ factor(as.character(gr[[.x]])))
+saveRDS(Y, "../Results/MixOmic/Y_object.RDS")
+saveRDS(X, "../Results/MixOmic/X_object.RDS")
+
+# write_csv(meta, "../Results/MixOmic/meta_int.csv")
+X <- readRDS("../Results/MixOmic/X_object.RDS")
+```
+
+### plot sample overlap
+
+```{r venn-diagram}
+#| eval: true
+#| output: false
+
+make_venn <- function(i) {
+  n12 <- length(intersect(i[["TR"]], i[["MG"]]))
+  n23 <- length(intersect(i[["MG"]], i[["MB"]]))
+  n13 <- length(intersect(i[["TR"]], i[["MB"]]))
+  n123 <- length(Reduce(intersect, list(i[["TR"]], i[["MG"]], i[["MB"]])))
+
+  venn.plot <- draw.triple.venn(
+    area1 = length(i[["TR"]]),
+    area2 = length(i[["MG"]]),
+    area3 = length(i[["MB"]]),
+    n12 = n12,
+    n23 = n23,
+    n13 = n13,
+    n123 = n123,
+    category = c("TR", "MG", "MB"),
+    fill = feat,
+    col = feat,
+    alpha = 0.5,
+    lty = rep("solid", 3),
+    lwd = rep(2, 3),
+    cat.fontfamily = rep("sans", 3),
+    cex = 2,
+    cat.cex = 2
+  )
+}
+
+# all samples and intersecting samples
+# Variables are created when running prep_multi_omics() function
+l <- list(ids_all, ids)
+
+plots <- map(l, ~ make_venn(.x)) %>%
+  map(., ~ grobTree(.x))
+
+```
+
+```{r plot-venn-diagram}
+#| fig-width: 8
+#| fig-height: 5
+grid.newpage()
+
+grid.arrange(
+  arrangeGrob(plots[[1]], top = "With follow up samples"),
+  arrangeGrob(plots[[2]], top = "Baseline only samples"),
+  ncol = 2
+)
+```
+
+## 4. Select response variable
+
+```{r clin-score-heatmap}
+### ------------------------------------------------------------
+### 1. Select symptom columns and prepare binary clinical data
+### ------------------------------------------------------------
+
+# Extract only samples of interest and symptom score columns
+df <- meta_data %>%
+  filter(svamp_ID %in% ids_uniq) %>% # keep only overlapping samples
+  select(svamp_ID, starts_with("Clinical score:")) # symptoms (y/n)
+
+# Convert symptom columns to numeric 0/1 and clean column names
+df_bin <- df %>%
+  filter(!is.na(svamp_ID)) %>% # remove missing IDs
+  mutate(across(starts_with("Clinical score:"), ~ as.numeric(.x))) %>% # convert factors/characters to numeric
+  rename_with(
+    ~ gsub("^(Clinical score: )| \\(y/n\\)$", "", .x),
+    contains("Clinical score:") # clean names: remove prefix + "(y/n)"
+  ) %>%
+  #filter(!is.na(discharge)) %>% # ensure 'discharge' column is valid
+  column_to_rownames("svamp_ID") # convert sample ID to rownames
+
+# Convert to numeric matrix for ComplexHeatmap
+mat <- as.matrix(df_bin)
+
+# Determine row annotation height scaling factor
+my_h <- 0.1 * nrow(mat)
+
+### ------------------------------------------------------------
+### 2. Prepare annotation dataframe (metadata)
+### ------------------------------------------------------------
+vars <- c(
+  "Clinical_score_(0-5)",
+  "Clin_gr",
+  "group_2",
+  "hyphae",
+  "RVVC_AS",
+  "group_cross"
+)
+annot_col <- meta %>%
+  filter(svamp_ID %in% rownames(df_bin)) %>% # keep same samples as heatmap matrix
+  select(svamp_ID, any_of(vars)) %>% # select annotation variables
+  mutate(across(1:length(vars) + 1, ~ factor(.x))) # ensure annotations are factors
+
+# Quick check: ensure annotation rows match heatmap rows
+dim(mat)
+dim(annot_col)
+
+### ------------------------------------------------------------
+### 3. Define color palettes
+### ------------------------------------------------------------
+
+Red <- brewer.pal(6, name = "Reds")
+pal5 <- c("#f26386", "#fd814e", "#a4d984", "#fbbc52")
+pal1 <- c("#ffa998", "#f588af", "#902267") # colors for binned clinical score
+pal4 <- c("#902267", '#FB5273', '#4FCEEF')
+pal2 <- c(
+  "#9e8dec",
+  #"#902267",
+  "#cc93cf", # colors for Groups
+  "#a5c97b",
+  "#de9548"
+)
+pal3 <- c("#2266ac", "#91c5de")
+
+### ------------------------------------------------------------
+### 4. Define row annotations for heatmap (ComplexHeatmap)
+### ------------------------------------------------------------
+
+row_annot <- rowAnnotation(
+  bin_Clin = annot_col$Clin_gr, # binned clinical grade
+  Clin = annot_col$`Clinical_score_(0-5)`, # raw clinical score
+  Group_cross = annot_col$group_cross, # sample group
+  RVVC = annot_col$group, # sample group
+  hyphae = annot_col$hyphae, # sample group
+  RVVC_AS = annot_col$RVVC_AS, # sample group
+
+  show_annotation_name = TRUE, # show labels
+  annotation_name_gp = gpar(fontsize = 8), # label font size
+
+  # Legend formatting
+  annotation_legend_param = list(
+    grid_height = unit(.1, "mm"),
+    grid_width = unit(2, "mm"),
+    title = "",
+    labels_gp = gpar(fontsize = 7),
+    title_gp = gpar(fontsize = 8)
+  ),
+
+  simple_anno_size = unit(.3, "cm"), # annotation row height
+
+  # Colors for each annotation variable
+  col = list(
+    Clin = set_names(Red, levels(annot_col$`Clinical_score_(0-5)`)),
+    bin_Clin = set_names(pal1, levels(annot_col$Clin_gr)),
+    Group_cross = set_names(pal2, levels(annot_col$group_cross)),
+    RVVC = set_names(pal3, levels(annot_col$group)),
+    RVVC_AS = set_names(pal4, levels(annot_col$RVVC_AS)),
+    hyphae = set_names(pal5, levels(annot_col$hyphae))
+  )
+)
+
+### ------------------------------------------------------------
+### 5. Color function for the symptom heatmap
+### ------------------------------------------------------------
+
+# 0 = no symptom (white), 1 = symptom (red)
+col_fun <- colorRamp2(
+  c(0, 1),
+  c("white", "#e05e85")
+)
+
+```
+
+```{r plot-clin-score}
+#| fig-width: 5
+#| fig-height: !expr my_h
+# Create heatmap
+H <- Heatmap(
+  mat,
+  width = unit(ncol(mat) * 5, "mm"),
+  height = unit(nrow(mat) * 2, "mm"),
+  name = "Symptom Present",
+  col = col_fun,
+  right_annotation = row_annot,
+  #cluster_rows = FALSE,
+  #cluster_columns = FALSE,
+  row_names_side = "right",
+  column_names_rot = 45,
+  row_names_gp = gpar(fontsize = 7),
+  heatmap_legend_param = list(
+    at = c(0, 1),
+    labels = c("No", "Yes")
+  ),
+  #   cell_fun = function(j, i, x, y, width, height, fill) {
+  #   grid.rect(x, y, width, height, gp = gpar(col = "grey70", lwd = 0.5, fill = NA))
+  # }
+  layer_fun = function(j, i, x, y, width, height, fill) {
+    # Draw cell borders without overwriting fill
+    grid.rect(
+      x = x,
+      y = y,
+      width = width,
+      height = height,
+      gp = gpar(col = "grey70", lwd = 0.4, fill = NA)
+    )
+  }
+)
+draw(H)
+```
+
+## Step 9: UMAP on signifcant genes
+
+```{r UMAP}
+
+# group information
+annot_col <- meta %>%
+  filter(svamp_ID %in% rownames(X$species$TR)) %>%
+  # select(-`Age (years)`) %>%
+  select(
+    1:12,
+    metab_louvain,
+    microb_louvain,
+    integ_louvain,
+    CST,
+    `Clinical_score_(0-5)`
+  ) %>%
+  mutate(across(2:8, ~ factor(.x))) %>%
+  mutate(
+    txt_clin = ifelse(
+      grepl("0", .$`Clinical_score_(0-5)`),
+      NA,
+      as.character(.$`Clinical_score_(0-5)`)
+    )
+  ) %>%
+  mutate(txt_id = ifelse(group_2 == "RVVC", .$svamp_ID, NA))
+
+#### UMAP analysis ####
+set.seed(1)
+umap_dfs <- map(
+  X$strain,
+  ~ uwot::umap(
+    .x,
+    n_neighbors = 15,
+    init = "spectral",
+    scale = T
+  )
+) %>%
+  map(
+    .,
+    ~ tibble(
+      "UMAP 1" = .x[, 1],
+      "UMAP 2" = .x[, 2],
+      "ID" = rownames(.x)
+    )
+  ) %>%
+  map(., ~ left_join(., annot_col, by = c("ID" = "svamp_ID")))
+
+#### UMAP plotting by groups ####
+
+# save plot to file
+#ggsave(paste0("./Figures/09/", "Bulk_UMAP.png"), p)
+
+UMAP_fun <- function(umap_df, group_var, txt_var, title = "") {
+  p <- ggplot(
+    umap_df,
+    aes(
+      x = `UMAP 1`,
+      y = `UMAP 2`,
+      fill = .data[[group_var]],
+      shape = RVVC_AS,
+      color = .data[[group_var]]
+    )
+  ) +
+    #geom_jitter( shape=21, size=3, color="white", width=.5, height=.5) +  # Tassos used jitter
+    geom_point(size = 3, alpha = 1) +
+    scale_colour_manual(
+      values = pal[[group_var]],
+      name = "",
+      aesthetics = c("colour", "fill")
+    ) +
+    scale_shape_manual(values = c(4, 21, 17), name = "", ) + #specify individual shapes+
+    geom_text(
+      data = umap_df,
+      aes(x = `UMAP 1`, y = `UMAP 2`, label = .data[[txt_var]]),
+      size = 3,
+      hjust = 0,
+      nudge_x = 0.07,
+      color = "gray51"
+    ) +
+    ggtitle(title) +
+    theme_bw(base_size = 14) +
+    theme(
+      line = element_blank(),
+      axis.ticks = element_line(color = "black"),
+      aspect.ratio = 1,
+      axis.title = element_blank()
+    )
+  return(p)
+}
+
+
+```
+
+
+```{r plot-UMAP}
+#| fig-width: 14
+#| fig-height: 5
+#| code-fold: true
+#| warning: false
+
+meta_clus <- colnames(annot_col)
+
+# quartz(width = 14, height = 5)
+p <- imap(umap_dfs, ~ UMAP_fun(.x, "RVVC_AS", "txt_clin", title = .y))
+patchwork::wrap_plots(p) + patchwork::plot_layout(guides = "collect")
+
+p <- imap(umap_dfs, ~ UMAP_fun(.x, "metab_louvain", "txt_clin", title = .y))
+patchwork::wrap_plots(p) + patchwork::plot_layout(guides = "collect")
+
+p <- imap(umap_dfs, ~ UMAP_fun(.x, "microb_louvain", "txt_clin", title = .y))
+patchwork::wrap_plots(p) + patchwork::plot_layout(guides = "collect")
+
+p <- imap(umap_dfs, ~ UMAP_fun(.x, "integ_louvain", "txt_clin", title = .y))
+patchwork::wrap_plots(p) + patchwork::plot_layout(guides = "collect")
+
+p <- imap(
+  umap_dfs,
+  ~ UMAP_fun(.x, "Clinical_score_(0-5)", "txt_clin", title = .y)
+)
+patchwork::wrap_plots(p) + patchwork::plot_layout(guides = "collect")
+
+```

@@ -1,0 +1,804 @@
+---
+title: "DIABLO Models"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html: 
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+      caption: Code
+params:
+  sparse: false
+---
+```{r Libraries}
+#| code-fold: true
+#| output: false
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(mixOmics)
+library(readxl)
+library(cowplot)
+library(RColorBrewer)
+library(scales)
+
+select <- dplyr::select
+map <- purrr::map
+
+pal <- c("#ffa998", "#f588af", "#902267") # #e05e85
+feat <- c("#bdd3c5", "#48919d", "#3d4b6eff") # "#1f2e55", "#c6cdf7"
+pal <- c("#d18ac8", "#3db8ac", "#8861d2", "#6095d7", "#755fa3", "#c44999")
+feat <- c("#e39ddaff", "#6dded3ff", "#a68cd5ff") #,"#6095d7","#755fa3","#c44999")
+
+pal <- list(
+  Clin = c("#a5c97b", "#cc93cf", "#de9548", "#63d3b4", "#9e8dec", "#902267"), #"#abcb4b"
+  Clin_bin = c("#ffa998", "#f588af", "#902267"),
+  RVVC_AS = c("#ffa998", '#FB5273', "#902267")
+)
+```
+
+```{r X-and-Y}
+X <- readRDS("../Results/MixOmic/X_object.RDS")
+Y <- readRDS("../Results/MixOmic/Y_object.RDS")
+```
+
+```{r remove-NA-samples}
+# ---- 5. Subset each matrix to baseline only and overlapping samples ----
+na_RVVC <- !(is.na(Y$RVVC_AS))
+
+X$species <- X$species %>% map(~ .x[na_RVVC, , drop = FALSE])
+X$strain <- X$strain %>% map(~ .x[na_RVVC, , drop = FALSE])
+Y <- Y %>% map(~ .x[na_RVVC])
+```
+
+**Variables to change**
+
+- Species vs strain level for MG data
+- full weighted vs full design matrix
+- different number of trx genes
+
+
+## 1. Specify design matrix
+The design matrix describes how strongly you want the different input datasets to be connected in the model. It is a matrix of numbers between 0 and 1, where each value shows how much the model should try to link two datasets.
+
+- Values between 0.5 and 1 tell the model to focus more on the correlations between those datasets.
+- Values below 0.5 tell the model to focus more on prediction rather than on linking the datasets.
+
+A matrix full of ones is the default matrix that is used, and can be specified by setting `design = "full"`. Similarly, setting `design = "null"` will produce a matrix full of zeroes.
+
+```{r design-matrix}
+weight <- c(0.1, 1) %>% set_names(., c("weighted", "full"))
+
+design <- map(
+  weight,
+  ~ matrix(
+    .x,
+    ncol = length(X[[1]]),
+    nrow = length(X[[1]]),
+    dimnames = list(names(X[[1]]), names(X[[1]]))
+  )
+)
+design <- map(
+  design,
+  ~ {
+    diag(.x) <- 0
+    .x
+  }
+)
+
+design$full
+```
+
+## Number of features to test when tuning
+
+```{r test.keepX}
+test.KeepX <- list(
+  "test.High" = list(
+    TR = c(seq(300, 500, 50)),
+    MG = c(50, 25, 5),
+    MB = c(50, 25, 5)
+  ),
+  "test.Median" = list(
+    TR = c(seq(100, 250, 50)),
+    MG = c(50, 25, 5),
+    MB = c(50, 25, 5)
+  ),
+  "test.Low" = list(
+    TR = c(seq(10, 50, 10)),
+    MG = c(50, 25, 5),
+    MB = c(50, 25, 5)
+  ),
+  "test.High" = list(
+    TR = c(seq(300, 500, 50)),
+    MG = c(50, 25, 5),
+    MB = c(50, 25, 5)
+  )
+)
+```
+
+## Tuning Table
+
+The `tune` tibble defines the combinations of parameters for multiple DIABLO tuning runs. Each row corresponds to a unique model configuration:
+
+- **Taxa** – selects a feature set from the `X` named list (e.g., `"strain"` → `X[["strain"]]`).
+- **Y** – selects the response variable from the `Y` named list (e.g., `"Clin"` → `Y[["Clin"]]`).
+- **design** – specifies the design matrix for the model (e.g., `"full"` or `"null"`).
+- **test.KeepX** – selects a variable selection parameter from the `test.KeepX` named list (e.g., `"test.High"` → `test.KeepX[["test.High"]]`).
+- **Model** – a unique integer ID used to name output files and track results.
+
+This structure allows each row to be passed programmatically to `run_diablo_tuning()`, which looks up the corresponding list elements and runs the model without manually specifying each combination. 
+
+```{r parameters-for-tuning}
+# tune <- tibble(
+#   "Taxa" = c("strain", "species", "strain", "species"),
+#   "gr" = c("RVVC_AS", "RVVC_AS", "Clin_bin", "Clin_bin"),
+#   "design" = c("full", "null", "full", "null"),
+#   "KeepX" = c("test.High", "test.Median", "test.Low", "test.High")
+# ) %>%
+#   mutate(Model = 1:ncol(.))
+
+tune <- tibble(
+  "Taxa" = c("strain", "strain", "strain", "strain", "strain"),
+  "gr" = c("RVVC_AS", "RVVC_AS", "Clin_bin", "Clin_bin", "RVVC_AS"),
+  "design" = c("full", "null", "full", "null", "null"),
+  "KeepX" = c("test.High", "test.Median", "test.Low", "test.High", "test.Low")
+) %>%
+  mutate(Model = 1:nrow(.))
+
+knitr::kable(tune)
+```
+
+::: {.panel-tabset}
+
+```{r Models-not-used, echo=FALSE, results='asis'}
+#| eval: false
+res <- pmap(
+  tune,
+  function(Taxa, gr, design, KeepX, Model) {
+    knitr::knit_child(
+      text = c(
+        paste0('## Model "', Model, '"'),
+        '',
+        '```{r}',
+        'tune.diablo <- tune.block.splsda(
+            X = X[[Taxa]],
+            Y = Y[[gr]],
+            design = design,
+            test.keepX = test.KeepX[[KeepX]],
+            ncomp = 2,
+            validation = "Mfold",
+            folds = 2,
+            nrepeat = 1
+        )',
+        '```',
+        ''
+      ),
+      envir = environment(),
+      quiet = TRUE
+    )
+  }
+)
+
+cat(unlist(res), sep = '\n')
+```
+
+```{r model-tuning-function}
+
+run_diablo_tuning <- function(
+  Taxa,
+  gr,
+  design,
+  KeepX,
+  Model,
+  overwrite = FALSE
+) {
+  out_file <- paste0("tune_batch_model_", Model, ".rds")
+
+  # ---- skip if already completed ----
+  if (file.exists(out_file) && !overwrite) {
+    fit <- readRDS(out_file)
+
+    # append to global list
+    diablo_fits[[paste0("Model ", Model)]] <<- fit
+
+    return(
+      tibble(
+        Model = Model,
+        design = design,
+        success = !inherits(fit, "error"),
+        runtime_sec = NA_real_,
+        output_file = out_file,
+        skipped = TRUE
+      )
+    )
+  }
+
+  # ---- run model ----
+  start_time <- Sys.time()
+
+  fit <- tryCatch(
+    tune.block.splsda(
+      X = X[[Taxa]],
+      Y = Y[[gr]],
+      design = design,
+      test.keepX = test.KeepX[[KeepX]],
+      ncomp = 2,
+      validation = "Mfold",
+      folds = 2,
+      nrepeat = 1
+    ),
+    error = function(e) e
+  )
+
+  end_time <- Sys.time()
+
+  saveRDS(fit, out_file)
+
+  # ---- append to global list ----
+  diablo_fits[[paste0("Model ", Model)]] <<- fit
+
+  summary <- tibble(
+    Model = Model,
+    design = design,
+    success = !inherits(fit, "error"),
+    runtime_sec = as.numeric(difftime(end_time, start_time, units = "secs")),
+    output_file = out_file,
+    skipped = FALSE
+  )
+
+  # ---- return either choice.keepX or the error object ----
+  fit_result <- if (!inherits(fit, "error")) fit$choice.keepX else fit
+
+  list(
+    summary = summary,
+    fit = fit_result
+  )
+}
+
+diablo_fits <- list()
+```
+
+```{r Tuning, echo=FALSE, results='asis'}
+res <- pmap(
+  tune,
+  function(Taxa, gr, design, KeepX, Model) {
+    knitr::knit_child(
+      text = c(
+        paste0('## Model ', Model),
+        '',
+        '```{r}',
+        'run_diablo_tuning(Taxa, gr, design, KeepX, Model, overwrite = F)',
+
+        '```',
+        ''
+      ),
+      envir = environment(),
+      quiet = TRUE
+    )
+  }
+)
+
+cat(unlist(res), sep = '\n')
+```
+
+## Run Models 
+
+:::
+
+```{r Models}
+#| code-fold: true
+
+# names <- map_chr(seq_along(tune$Model), ~ paste0("Model", .x))
+
+# diablo_mod <- pmap(
+#   tune,
+#   ~ block.splsda(
+#     X = X[[..1]],
+#     Y = Y[[..2]],
+#     design = ..3,
+#     keepX = diablo_fits[[..5]]$choice.keepX,
+#     ncomp = 2
+#   )
+# ) %>%
+#   set_names(., names)
+
+tune <- tune %>%
+  mutate(
+    .,
+    diablo.mod = pmap(
+      .,
+      ~ block.splsda(
+        X = X[[..1]],
+        Y = Y[[..2]],
+        design = ..3,
+        keepX = diablo_fits[[..5]]$choice.keepX,
+        ncomp = 2
+      )
+    )
+  ) %>%
+  mutate(nr_feat = pmap(., ~ diablo_fits[[..5]]$choice.keepX)) %>%
+  mutate(diablo.mod = set_names(.$diablo.mod, paste0("Model ", .$Model)))
+
+saveRDS(tune, "../Results/MixOmic/Diablo_object.RDS")
+# tune <- readRDS("../Results/MixOmic/Diablo_object.RDS")
+```
+
+## Visualizations
+
+::: {.panel-tabset}
+
+```{r ordinaition-plot, echo=FALSE, results='asis'}
+
+Y_n <- tune$gr %>% set_names()
+pal_n <- map(Y_n, ~ pluck(pal, .x))
+
+res <- pmap(
+  #list(diablo_mod, pal_n, seq_along(diablo_mod)),
+  tune,
+  function(Taxa, gr, design, KeepX, nr_feat, Model, diablo.mod) {
+    knitr::knit_child(
+      text = c(
+        paste0('## Model ', Model),
+        paste0('###### Taxa: ', Taxa, ', Design: ', design), #'\n'
+        paste0(
+          '###### KeepX:  TR: ',
+          as.character(nr_feat[["TR"]]),
+          ' MG: ',
+          as.character(nr_feat[["MG"]]),
+          ' MB: ',
+          as.character(nr_feat[["MB"]])
+        ), #'\n'
+        '',
+        '```{r}',
+        '#| fig-width: 15',
+        '#| fig-height: 16',
+        'plotIndiv(',
+        '   diablo.mod,',
+        '   ind.names = FALSE,',
+        '   legend = TRUE,',
+        '   col = pal[[gr]],',
+        '   title = "Comp 1 - 2")',
+        '```',
+        ''
+      ),
+      envir = environment(),
+      quiet = TRUE
+    )
+  }
+)
+
+cat(unlist(res), sep = '\n')
+
+```
+
+:::
+
+::: {.panel-tabset}
+
+```{r Arrowplot, echo=FALSE, results='asis'}
+
+res <- pmap(
+  #list(diablo_mod, tune$Taxa, tune$design, pal_n, seq_along(diablo_mod)),
+  tune,
+  function(Taxa, gr, design, KeepX, nr_feat, Model, diablo.mod) {
+    knitr::knit_child(
+      text = c(
+        paste0('## Model ', Model),
+        paste0('###### Taxa: ', Taxa, ', Design: ', design), #'\n'
+        paste0(
+          '###### KeepX:  TR: ',
+          as.character(nr_feat[["TR"]]),
+          ' MG: ',
+          as.character(nr_feat[["MG"]]),
+          ' MB: ',
+          as.character(nr_feat[["MB"]])
+        ),
+        '```{r}',
+        '#| fig-width: 8',
+        '#| fig-height: 6',
+        'plotArrow(',
+        '  diablo.mod,',
+        '  ind.names = FALSE,',
+        '  legend = TRUE,',
+        '  col = pal[[gr]],',
+        '  title = "comp 1 - 2")',
+        '```',
+        ''
+      ),
+      envir = environment(),
+      quiet = TRUE
+    )
+  }
+)
+
+cat(unlist(res), sep = '\n')
+
+```
+
+:::
+
+::: {.panel-tabset}
+
+```{r omic-correlation, echo=FALSE, results='asis'}
+
+res <- pmap(
+  #list(diablo_mod, tune$Taxa, tune$design, pal_n, seq_along(diablo_mod)),
+  tune,
+  function(Taxa, gr, design, KeepX, nr_feat, Model, diablo.mod) {
+    knitr::knit_child(
+      text = c(
+        paste0('## Model ', Model),
+        paste0('###### Taxa: ', Taxa, ', Design: ', design), #'\n'
+        paste0(
+          '###### KeepX:  TR: ',
+          as.character(nr_feat[["TR"]]),
+          ' MG: ',
+          as.character(nr_feat[["MG"]]),
+          ' MB: ',
+          as.character(nr_feat[["MB"]])
+        ),
+        '```{r}',
+        '#| fig-width: 8',
+        '#| fig-height: 8',
+        'plotDiablo(diablo.mod, ncomp = 1, col.per.group = pal[[gr]])',
+        '```',
+        ''
+      ),
+      envir = environment(),
+      quiet = TRUE
+    )
+  }
+)
+
+cat(unlist(res), sep = '\n')
+```
+
+:::
+
+::: {.panel-tabset}
+
+```{r var-plot, echo=FALSE, results='asis'}
+
+res <- pmap(
+  #list(diablo_mod, tune$Taxa, tune$design, pal_n, seq_along(diablo_mod)),
+  tune,
+  function(Taxa, gr, design, KeepX, nr_feat, Model, diablo.mod) {
+    knitr::knit_child(
+      text = c(
+        paste0('## Model ', Model),
+        paste0('###### Taxa: ', Taxa, ', Design: ', design), #'\n'
+        paste0(
+          '###### KeepX:  TR: ',
+          as.character(nr_feat[["TR"]]),
+          ' MG: ',
+          as.character(nr_feat[["MG"]]),
+          ' MB: ',
+          as.character(nr_feat[["MB"]])
+        ),
+        '```{r}',
+        '#| fig-width: 8',
+        '#| fig-height: 8',
+        '#| fig-cap: "The correlation circle plot highlights the contribution of each selected variable to each component. Important variables should be close to the large circle. Here, only the variables selected on components 1 and 2 are depicted (across all blocks). Clusters of points indicate a strong correlation between variables."',
+        'plotVar(',
+        '  diablo.mod,',
+        '  var.names = FALSE,',
+        '  style = "graphics",',
+        '  legend = TRUE,',
+        '  pch = c(16, 17, 15),',
+        '  cex = c(2, 2, 2),',
+        '  col = c("#e39ddaff", "#6dded3ff", "#a68cd5ff"),',
+        '  title = "DIABLO comp 1 - 2")',
+        '```',
+        ''
+      ),
+      envir = environment(),
+      quiet = TRUE
+    )
+  }
+)
+
+cat(unlist(res), sep = '\n')
+```
+
+:::
+
+::: {.panel-tabset}
+
+```{r mixOmic-heatmap, echo=FALSE, results='asis'}
+
+res <- pmap(
+  #list(diablo_mod, tune$Taxa, tune$design, pal_n, seq_along(diablo_mod)),
+  tune,
+  function(Taxa, gr, design, KeepX, nr_feat, Model, diablo.mod) {
+    img_path <- paste0("../Results/MixOmic/Heatmap_Model_", Model, ".png")
+    knitr::knit_child(
+      text = c(
+        paste0('## Model ', Model),
+        paste0('###### Taxa: ', Taxa, ', Design: ', design), #'\n'
+        paste0(
+          '###### KeepX:  TR: ',
+          as.character(nr_feat[["TR"]]),
+          ' MG: ',
+          as.character(nr_feat[["MG"]]),
+          ' MB: ',
+          as.character(nr_feat[["MB"]])
+        ),
+        '```{r}',
+        '#| fig-width: 8',
+        '#| fig-height: 8',
+        '#| fig-cap: "Circos plot from multiblock sPLS-DA. The plot represents the correlations greater than 0.7 between variables of different types, represented on the side quadrants. The internal connecting lines show the positive (negative) correlations. The outer lines show the expression levels of each variable in each sample group."',
+        '',
+        paste0(
+          'png("',
+          img_path,
+          '", width = 20, height = 15, res = 300, units = "in")'
+        ),
+        'cim_obj <- cimDiablo(',
+        '    diablo.mod,',
+        '    comp = 1,',
+        '    color.Y = pal[[gr]],',
+        '    size.legend = 1.5,',
+        '    margins = c(10, 4),',
+        '    color.blocks = c("#e39ddaff", "#6dded3ff", "#a68cd5ff"),',
+        '    legend.position = "bottomleft",',
+        '    title = "Clustered heatmap of integrated data")',
+        '',
+        'dev.off()',
+        '```',
+        '',
+        paste0('![](', img_path, ')'),
+        ''
+      ),
+      envir = environment(),
+      quiet = TRUE
+    )
+  }
+)
+
+cat(unlist(res), sep = '\n')
+```
+
+:::
+
+::: {.panel-tabset}
+
+```{r circosPlot, echo=FALSE, results='asis'}
+
+res <- pmap(
+  #list(diablo_mod, tune$Taxa, tune$design, pal_n, seq_along(diablo_mod)),
+  tune,
+  function(Taxa, gr, design, KeepX, nr_feat, Model, diablo.mod) {
+    img_path <- paste0("../Results/MixOmic/CircosPlot_Model_", Model, ".png")
+    knitr::knit_child(
+      text = c(
+        paste0('## Model ', Model),
+        paste0('###### Taxa: ', Taxa, ', Design: ', design), #'\n'
+        paste0(
+          '###### KeepX:  TR: ',
+          as.character(nr_feat[["TR"]]),
+          ' MG: ',
+          as.character(nr_feat[["MG"]]),
+          ' MB: ',
+          as.character(nr_feat[["MB"]])
+        ),
+        '```{r}',
+        '#| fig-width: 10',
+        '#| fig-height: 8',
+        '',
+        paste0(
+          'png("',
+          img_path,
+          '", width = 20, height = 15, res = 300, units = "in")'
+        ),
+        #'png(paste0("../Results/MixOmic/Heatmap_Model_",Model,".png"),',
+        #'    width = 20, height = 15, res = 600, units = "in")',
+        'sim_m <- circosPlot(',
+        '    diablo.mod,',
+        '    cutoff = 0.7,',
+        '    line = TRUE,',
+        '    size.variables = 0.5,',
+        '    size.labels = 1,',
+        '    color.Y = pal[[gr]],',
+        '    color.blocks = c("#e39ddaff", "#6dded3ff", "#a68cd5ff"),',
+        '    color.cor = c("#F67E4B", "#6EA6CD"))',
+        '',
+        'dev.off()',
+        '```',
+        '',
+        paste0('![](', img_path, ')'),
+        ''
+      ),
+      envir = environment(),
+      quiet = TRUE
+    )
+  }
+)
+
+cat(unlist(res), sep = '\n')
+```
+
+:::
+
+```{r simmilarity-plot}
+#| code-fold: true
+#| eval: false
+
+sim_to_edges <- function(sim_matrix, threshold = NULL) {
+  #colnames(sim_matrix) <- make.names(colnames(sim_matrix), unique = TRUE)
+  #rownames(sim_matrix) <- make.names(rownames(sim_matrix), unique = TRUE)
+
+  # removes spaces from feature names and replace with "_"
+  colnames(sim_matrix) <- gsub("\\s+", "_", colnames(sim_matrix))
+  rownames(sim_matrix) <- gsub("\\s+", "_", rownames(sim_matrix))
+
+  TR <- colnames(X$TR) %>% gsub("\\s+", "_", .)
+  MB <- colnames(X$MB) %>% gsub("\\s+", "_", .)
+  MG <- colnames(X$MG) %>% gsub("\\s+", "_", .)
+
+  # ---- edges between features ----
+  feature_edges <- sim_matrix %>%
+    as_tibble(rownames = "from") %>%
+    #as.data.frame() %>%
+    #rownames_to_column("from") %>%
+    pivot_longer(-from, names_to = "to", values_to = "weight") %>%
+    mutate(
+      type_from = case_when(
+        from %in% TR ~ "TR",
+        from %in% MB ~ "MB",
+        from %in% MG ~ "MG"
+      ),
+      type_to = case_when(
+        to %in% TR ~ "TR",
+        to %in% MB ~ "MB",
+        to %in% MG ~ "MG"
+      )
+    ) %>%
+    filter(from != to) %>%
+    filter(type_from != type_to) %>% # only cross-block edges
+
+    # remove duplicates in symmetric matrix:
+    rowwise() %>%
+    mutate(pair = paste(sort(c(from, to)), collapse = "_")) %>%
+    distinct(pair, .keep_all = TRUE) %>%
+    ungroup() %>%
+    select(-pair)
+
+  # Filter weights
+  if (!is.null(threshold)) {
+    feature_edges <- feature_edges %>% filter(weight >= threshold)
+  }
+
+  # ---- vertex table ----
+  vertex_df <- tibble(name = colnames(sim_matrix)) %>%
+    mutate(
+      block = case_when(
+        name %in% TR ~ "TR",
+        name %in% MG ~ "MG",
+        name %in% MB ~ "MB"
+      )
+    )
+
+  # ---- block hierarchy edges ----
+  block_edges <- rbind(
+    data.frame(from = "origin", to = unique(vertex_df$block)),
+    vertex_df %>% rename(from = block, to = name)
+  )
+
+  return(list(
+    edges = block_edges,
+    feature_edges = feature_edges,
+    vertices = vertex_df
+  ))
+}
+
+
+# choose to display corelation values or similarity values
+# the similarity values are the matrix returned from the circosplot() function
+n <- f %>%
+  map(., ~ head(.x, 10)) %>%
+  unlist(.) %>%
+  intersect(colnames(sim_m), .)
+
+n <- f %>%
+  map(., ~ head(.x, 10)) %>%
+  unlist(.) %>%
+  intersect(colnames(big_cor), .)
+# sim_matrix <- sim_m
+
+# sim_matrix <- sim_m[n,n]
+sim_matrix <- big_cor[n, n]
+glimpse(sim_matrix)
+edges <- sim_to_edges(sim_matrix[n, n], 0.4)
+
+
+# expand vertex table to include meta nodes: origin + block names
+vertices <- edges$vertices %>%
+  bind_rows(
+    tibble(
+      name = c("origin", unique(edges$vertices$block)),
+      block = NA
+    )
+  )
+
+
+#Let's add information concerning the label we are going to add: angle, horizontal adjustement and potential flip
+#calculate the ANGLE of the labels
+vertices$id <- NA
+myleaves <- which(is.na(match(vertices$name, edges$from)))
+nleaves <- length(myleaves)
+vertices$id[myleaves] <- seq(1:nleaves)
+vertices$angle <- 90 - 360 * vertices$id / nleaves
+
+# calculate the alignment of labels: right or left
+# If I am on the left part of the plot, my labels have currently an angle < -90
+vertices$hjust <- ifelse(vertices$angle < -90, 1, 0)
+
+# flip angle BY to make them readable
+vertices$angle <- ifelse(
+  vertices$angle < -90,
+  vertices$angle + 180,
+  vertices$angle
+)
+
+
+mygraph <- igraph::graph_from_data_frame(
+  d = edges$edges, # hierarchical edges only
+  vertices = vertices
+)
+
+# recalc leaf because adding meta nodes broke original leaf detection
+#V(mygraph)$leaf <- degree(mygraph, mode = "out") == 0
+
+# optional: add feature–feature similarity edges
+# mygraph <- igraph::add_edges(
+#   mygraph,
+#   t(as.matrix(edges$feature_edges[, c("from", "to")]))
+# )
+
+# Convert feature_edges into index form
+from <- match(edges$feature_edges$from, V(mygraph)$name)
+to <- match(edges$feature_edges$to, V(mygraph)$name)
+connect <- edges$feature_edges
+
+p <- ggraph(mygraph, layout = "dendrogram", circular = TRUE) +
+
+  # similarity bundles
+  geom_conn_bundle(
+    data = get_con(from = from, to = to, value = connect$weight),
+    aes(alpha = value, color = value),
+    tension = 0.6, # adjust bundling strength
+    width = 0.8
+  ) +
+
+  # features at the periphery
+  geom_node_point(
+    aes(filter = leaf, x = x * 1.05, y = y * 1.05, color = block),
+    size = 2
+  ) +
+
+  # optional text labels
+  geom_node_text(aes(x = x * 1.25, y = y * 1.05, filter = leaf, label = name)) +
+  # geom_node_text(aes(x = x, y=y, filter = leaf, label=name,
+  #               angle = angle,
+  #               hjust=hjust,
+  #               colour=block), size=2, alpha=1) +
+  coord_cartesian(clip = "off") +
+
+  #scale_color_viridis_c(option = "B") +
+  scale_alpha(range = c(0.1, 0.8)) +
+  theme_void() +
+  theme(
+    #legend.position = "none",
+    plot.margin = unit(c(0, 0, 0, 0), "cm")
+  ) +
+  expand_limits(x = c(-1.5, 1.5), y = c(-1.25, 1.25))
+
+p
+
+```
