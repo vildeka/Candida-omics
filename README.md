@@ -30,7 +30,7 @@ This repository will bring together multiple omics layers generated from the sam
 
 ### Quality Control and Normalization
 
-0. [QC-Tissue-Metagenome](https://vildeka.github.io/Candida-omics/Metagenome_tissue_QC_analysis)
+0. [QC-Tissue-Metagenome](https://vildeka.github.io/Candida-omics/src/QC_Tissue_Metagenomics.html)
 1. [QC-Luminal-Metagenome](https://vildeka.github.io/Candida-omics/QC_Luminal_Metagenomics)
 2. [QC-Metabolome](https://vildeka.github.io/Candida-omics/QC_Metabolomics)
 3. [QC-Transcriptome](https://vildeka.github.io/Candida-omics/QC_Transcriptomics)
