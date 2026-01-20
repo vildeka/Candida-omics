@@ -26,7 +26,7 @@ library(readxl)
 
 # BiocManager::install("limma")
 library(limma)
-library(mixOmics) 
+library(mixOmics)
 library(edgeR)
 
 library(cowplot)
@@ -39,7 +39,7 @@ map <- purrr::map
 #################
 # COLOUR PALLET #
 #################
-pal <- c("#902267", "#ffa998", "#f588af") # #e05e85
+pal <- c("#ffa998", "#e05e85", "#902267") # #e05e85, #f588af
 
 ```
 
@@ -49,29 +49,87 @@ https://divingintogeneticsandgenomics.com/post/partial-least-square-regression-f
 ## Overview: 
 #### Feature Selection Workflow for Multi-Omics Integration
 
-1. **Data QC & Preprocessing (per omics)**  
-   Clean, normalize, and scale each omics dataset independently.
+1. **Clean up data**  
+   Compile the data into appropriate format.
 
-2. **Exploratory Supervised Check with PLS-DA (optional)**  
-   Use PLS-DA to confirm that class separation exists before applying sparsity.
+2. **Remove QC samples**  
+   Filter QC samples.
 
-3. **Tune Sparse Model Parameters with `tune.splsda()`**  
-   Identify the optimal number of components (`ncomp`) and variables to select per component (`keepX`) via cross-validation.
+3. **Normalize**  
+   Use quntile normalization from limma package.
 
-4. **Fit Final sPLS-DA Model**  
-   Build the sPLS-DA model using the tuned parameters.
+4. **Plot unsupervised UMAPs**  
+   Plot all metabolomics samples by UMAP across various meta data groups.
 
-5. **Assess Model Performance & Stability with `perf()`**  
-   Evaluate classification accuracy, balanced error rate (BER), and stability of selected variables.
-
-6. **Extract Selected Features (per component and per omics)**  
-   Retrieve the most discriminant variables identified by the sPLS-DA model.
-
-7. **Save Feature Lists for Downstream Multi-Omics Integration**  
-   Use the selected features as input for integration frameworks such as **DIABLO** (`block.splsda()`).
+5. **Plot shankey plot**  
+   Plot the relationship between samples for different meta data groups.
 
 
-## 1. Data QC & Preprocessing
+```{r pallets}
+#| code-fold: true
+
+pal <- list(
+  subCST = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#91c5de"
+  ),
+  RVVC = c("#EAEAEA", "#fd814e"),
+  BV = c("#EAEAEA", "#fd814e"),
+  NAC = c("#EAEAEA", "#fd814e"),
+  ST = c("#EAEAEA", "#fd814e"),
+  missing_RVVC = c("#EAEAEA", "#fd814e"),
+  Clin = c("#a5c97b", "#cc93cf", "#de9548", "#63d3b4", "#9e8dec", "#902267"),
+  Clin_gr = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_AS = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_pos = c(
+    "#A6CEE3",
+    "#1F78B4",
+    "#EAEAEA",
+    "gray",
+    "#e490c4ff",
+    "#c12d88ff"
+  ), # "#FB9A99", "#E31A1C", "#B2DF8A", "#609c5bff", "#FDBF6F", "#FF7F00",, "#CAB2D6", "#6a3d9a" "#e490c4ff", "#c12d88ff"
+  metab_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273'
+  ),
+  microb_louvain = c(
+    "#de9548",
+    "#cc93cf",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4"
+  ),
+  integ_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#984EA3"
+    #"#B3CDE3"
+  ),
+  "Wet_smear:_clue_cells_(y/n)" = c("#2266ac", "#91c5de"),
+  hyphae = c("#f26386", "#fd814e", "#a4d984", "#fbbc52"),
+  pos = c("#91c5de", "#2266ac"),
+  "Clinical_score_(0-5)" = brewer.pal(6, name = "Reds")
+)
+```
+
 
 ```{r Load-data}
 #| code-fold: true
@@ -80,56 +138,167 @@ https://divingintogeneticsandgenomics.com/post/partial-least-square-regression-f
 # LOAD DATA #
 #############
 meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
-meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1)
+meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp_FINAL.xlsx"
+CST_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv"
+metab_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src/Paulo/results/microb_metab_clustering.csv"
+meta_data <- read_xlsx(meta_path, sheet = "Metadata")
+meta_groups <- read_csv("../Results/meta_int_groups.csv")
+
+metab_clus <- read.csv(metab_path) %>% rename(svamp_ID = 1) %>% as_tibble()
+CST_info <- read_csv(CST_path) %>% dplyr::select(svamp_ID, CST, subCST)
 
 matrix_data <- read_csv("../Tidy_data/Metabolomics/Metabolom_matrix.csv")
 metadata <- read_csv("../Tidy_data/Metabolomics/metabolomics_metadata.csv")
-annotation_table <- read_csv("../Tidy_data/Metabolomics/metabolomics_annotation.csv")
+annotation_table <- read_csv(
+  "../Tidy_data/Metabolomics/metabolomics_annotation.csv"
+)
 ```
+
+## Step 1. Preprocessing
 
 ### Cleaning up data
 The metabolomic data was provided in a unformatted table, so compiling the data into appropriate format is required. Differences in sample number, metabolite nomenclature, etc.
-```{r Paulos-code}
+```{r Clean-up-originalmetabolom-file}
 #| code-fold: true
 #| eval: false
-RAW <- as.data.frame(RAW)
-head(colnames(RAW),30); head(RAW[,1],30)
 
-# EXTRACT INFO
-N <- grep("order",colnames(RAW)); M <- grep("1",RAW[,1])[1]-1
-md <- RAW[(M+1):nrow(RAW),1:N]
-an <- RAW[1:M,(N+1):ncol(RAW)]
-M <- RAW[(M+1):nrow(RAW),(N+1):ncol(RAW)]
+#############
+# LOAD DATA #
+#############
+#---  Load sample info ----
+smpl_IDs <- read_xlsx("../data/svamp_ID_list.xlsx") %>%
+  select(svamp_ID, barcode_metabolomics)
 
-# HARMONIZE COMPOUND ANNOTATIONS
-an <- rbind(an,colnames(an))
-colnames(an) <- gsub(",",".",paste0("GCMS-",signif(as.numeric(an[6,],2)),"@",
-    signif(as.numeric(an[5,],2))))
-ann <- t(rbind(name=an[17,], HMDB=an[2,], KEGG=an[3,], PUBCHEM=an[4,], 
-    Mz=an[6,], Rt = an[5,] , row.names = colnames(an) ))
-colnames(an) <- an[17,]
+#---  Load raw file from metabolomics sequencing facility ----
+mbol_path <- "../data/Metabolomics/UTF-8SMC_P0800_GCMS_Data.xlsx"
+RAW <- read_xlsx(mbol_path)
 
-# HARMONIZE SAMPLE NAMES
-colnames(M) <- colnames(an)
-rownames(md) <- md[,"svamp_ID"]
-rownames(M) <- md[,"svamp_ID"]
 
-# CONVERT TO MATRIX
-M <- t(matrix(as.numeric(as.matrix(M)),nrow(M),ncol(M),dimnames = dimnames(M)))
+##############
+# CLEAN DATA #
+##############
+# this code is based on Paulos analysis of the metabolomics data
+# View first few column names and first column values
+head(colnames(RAW), 30)
+head(RAW[[1]], 30)
 
-# INCORPORATE EXTRA METADATA
-pmd <- as.data.frame(readxl::read_excel("../data/metabolomics/svamp_ID_list.xlsx"))
-md <- cbind(md, pmd[match(md$svamp_ID,md$svamp_ID),c("group_cross","group_longitudinal", "spatial_code")])
-md[is.na(md)] <- ""
+#--- 1. Identify structure of the table ----
+# Find where annotation columns end (contains "order" keyword)
+col_boundary <- which(str_detect(
+  colnames(RAW),
+  regex("order", ignore_case = TRUE)
+))
+# Find where sample data begins (first row that starts with "1" in first column)
+row_boundary <- which(RAW[[1]] == "1")[1] - 1
 
-# SAVE OUTPUT
-write.csv(M, "../results/metabolomics_matrix.csv", row.names=T)
-write.csv(md, "../results/metabolomics_metadata.csv", row.names=T)
-write.csv(ann, "../results/metabolomics_annotation.csv", row.names=T)
+#--- 2. Split into three logical components ----
+# Sample metadata (left block, below header)
+metadata <- RAW %>%
+  slice((row_boundary + 1):n()) %>%
+  select(all_of(1:col_boundary))
+
+# Compound annotations (top block, right side)
+annotations_raw <- RAW %>%
+  slice(1:row_boundary) %>%
+  select(1, all_of((col_boundary + 1):ncol(RAW)))
+#select(1, all_of((col_boundary + 1):ncol(RAW)))
+
+# Measurement matrix (sample × metabolite intensities)
+matrix_data <- RAW %>%
+  slice((row_boundary + 1):n()) %>%
+  select(
+    `Compound Name`,
+    "barcode_metabolomics" = `customer sample Identifier`,
+    (col_boundary + 1):ncol(RAW)
+  ) %>%
+  left_join(., smpl_IDs, by = "barcode_metabolomics") %>%
+  relocate(svamp_ID, .before = "barcode_metabolomics") %>%
+  mutate(
+    svamp_ID = ifelse(
+      grepl("^QC\\d", .$`Compound Name`),
+      .$`Compound Name`,
+      .$svamp_ID
+    )
+  ) %>%
+  select(-`Compound Name`, -barcode_metabolomics) %>%
+  pivot_longer(cols = -svamp_ID, names_to = "Compund") %>%
+  pivot_wider(names_from = svamp_ID) %>%
+  select(Compund, starts_with("QC"), sort(colnames(.)))
+
+
+#--- 3. Build tidy annotation table ----
+# Extract selected annotation rows and pivot them into a tidy format
+annotation_table <- annotations_raw %>%
+  #rename(row_label=`GCMS-NA@NA`) %>%
+  slice(., c(2:6)) %>% # rows with HMDB, KEGG, PubChem, Mz, Rt
+  pivot_longer(-1, names_to = "names", values_to = "value") %>%
+  pivot_wider(names_from = "Compound Name", values_from = value) %>%
+  # Create uniqe compound IDs by using M/z and Rt
+  mutate(
+    Compound_ID = paste0(
+      "GCMS-",
+      round(as.numeric(`M/z (unique)`)),
+      "@",
+      round(as.numeric(`RI (resolved)`))
+    )
+  )
+
+#--- 4. Remove quality control compunds ----
+annotation_table <- annotation_table %>%
+  filter(!grepl("Standard", .$names))
+
+# Results:
+# metadata         → sample metadata (e.g. sample ID, run order)
+# matrix_data      → numeric matrix (samples × compounds)
+# annotation_table → clean annotation metadata per compound
+
+#############
+# SAVE DATA #
+#############
+write_csv(matrix_data, "../Tidy_data/Metabolomics/Metabolom_matrix.csv")
+write_csv(metadata, "../Tidy_data/Metabolomics/metabolomics_metadata.csv")
+write_csv(
+  annotation_table,
+  "../Tidy_data/Metabolomics/metabolomics_annotation.csv"
+)
 ```
 
-We start by removing reference compunds and quality controll samples, 
-before log10 and quantile normalising
+
+```{r meta_info}
+metab_clus <- metab_clus %>%
+  select(svamp_ID, ends_with("_louvain")) %>%
+  mutate_at(., 2:ncol(.), factor)
+
+meta_data <- meta_data %>%
+  select(
+    svamp_ID,
+    38:42,
+    22,
+    24:25,
+    54,
+    starts_with("Clinical score")
+  )
+
+meta <- meta_groups %>%
+  #mutate(svamp_ID = str_replace(svamp_ID, "S75_Bl", "S75_BL")) %>%
+  #dplyr::rename(sample = "svamp_ID") %>%
+  left_join(CST_info, by = "svamp_ID") %>%
+  left_join(metab_clus, by = "svamp_ID") %>%
+  #left_join(trx_mapping, by = "sample") %>%
+  mutate(
+    Lacto = ifelse(
+      CST == "I",
+      "Lacto_c",
+      ifelse(CST == "III", "Lacto_i", "other")
+    )
+  ) %>%
+
+  left_join(meta_data, by = "svamp_ID") %>%
+  rename_with(~ gsub(" ", "_", .x)) %>%
+  mutate("Clinical_score_(0-5)" = as.character(`Clinical_score_(0-5)`))
+```
+
+## Step 2: Remove QC samples
 
 ### Filter samples
 ```{r filter-samples}
@@ -138,18 +307,18 @@ before log10 and quantile normalising
 ###############
 data <- matrix_data %>%
   # remove reference compunds
-  filter(!grepl("Standard",.$Compund)) %>%
+  filter(!grepl("Standard", .$Compund)) %>%
   # remove controll samples
   select(-starts_with("QC"))
 
 # transforme to matrix
 matrix <- data %>%
   column_to_rownames(var = "Compund") %>%
-  as.matrix(.) 
+  as.matrix(.)
 
 ```
 
-### Normalize
+## Step 3: Normalize data
 ```{r Normalize-data}
 # Normalize data
 ##################
@@ -162,7 +331,7 @@ norm <- normalizeQuantiles(log1p(matrix))
 matrix.t <- matrix %>%
   t()
 
-matrix.t[1:5,1:4]
+matrix.t[1:5, 1:4]
 ```
 
 NB! the majority(?) of mixOmics functions expect a format of
@@ -172,67 +341,199 @@ samples as rows and features as columns, thus the transformation is VERY importa
 ########################
 # SAVE NORMALIZED DATA #
 ########################
-norm %>% as_tibble(., rownames = "svamp_ID") %>%
+norm %>%
+  as_tibble(., rownames = "svamp_ID") %>%
   write_csv(., "../Results/MixOmic/Metabolom_Normalized.csv")
 # norm <- read_csv("../Results/MixOmic/Metabolom_Normalized.csv")
 ```
 
-### Get group assignment
-```{r group-assignment}
-gr <- c("0"="ctrl", "1"="ctrl", "2"="int", "3"="int", "4"="C.a", "5"="C.a")
+## Step 4: UMAP 
 
-gr_data <- meta_data %>%
-    rename(`Symptom score (0-5)` = "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren") %>%
-  select(
-    svamp_ID,
-    `Clinical score (0-5)`,
-    `Fungal culture: C. albicans (y/n)`,
-    `Fungal culture: Non-albicans candida spp. (y/n)`,
-    `Symptom score (0-5)`,
-    `Recurring fungal infections > 2/year (y/n)`
-  ) %>%
-    mutate(
-  group = case_when(
-    `Fungal culture: C. albicans (y/n)` == "1" &
-      `Symptom score (0-5)` >= 1 &
-      `Recurring fungal infections > 2/year (y/n)` == "1" ~
-      "RVVCpos",
+```{r UMAP}
 
-    `Fungal culture: C. albicans (y/n)` == "0" &
-      `Recurring fungal infections > 2/year (y/n)` == "1" ~
-      "RVVCneg",
+#### UMAP analysis ####
+set.seed(1)
+umap <- uwot::umap(
+  t(norm),
+  n_neighbors = 15,
+  init = "spectral",
+  scale = T,
+  seed = 1234
+)
 
-    `Fungal culture: C. albicans (y/n)` == "1" &
-      `Symptom score (0-5)` == 0 ~
-      "AS",
+# group information
+annot_col <- meta %>%
+  filter(svamp_ID %in% colnames(norm)) %>%
+  # select(-`Age (years)`) %>%
+  mutate(across(2:7, ~ factor(.x)))
 
-    `Fungal culture: C. albicans (y/n)` == "0" &
-      `Recurring fungal infections > 2/year (y/n)` == "0" ~
-      "Control",
-
-    `Fungal culture: C. albicans (y/n)` == "1" &
-      `Recurring fungal infections > 2/year (y/n)` == "0" ~
-      "Candidapos",
-
-    TRUE ~ NA_character_
-  )
+umap_df <- tibble(
+  "UMAP 1" = umap[, 1],
+  "UMAP 2" = umap[, 2],
+  "ID" = rownames(umap)
 ) %>%
-  select("svamp_ID", group, everything())
+  left_join(., annot_col, by = c("ID" = "svamp_ID"))
 
+#### UMAP plotting by groups ####
+txt_df <- umap_df %>%
+  select(1:21, `Clinical_score_(0-5)`) %>%
+  mutate(
+    txt_clin = ifelse(
+      grepl("0", umap_df$`Clinical_score_(0-5)`),
+      NA,
+      as.character(.$`Clinical_score_(0-5)`)
+    )
+  ) %>%
+  mutate(txt_id = ifelse(RVVC == "RVVC", .$ID, NA))
+
+# save plot to file
+#ggsave(paste0("./Figures/09/", "Bulk_UMAP.png"), p)
+
+UMAP_fun <- function(group_var, txt_var, shape_gr = NULL, shape = NULL) {
+  p <- ggplot(
+    umap_df,
+    aes(
+      x = `UMAP 1`,
+      y = `UMAP 2`,
+      fill = .data[[group_var]],
+      color = .data[[group_var]],
+      #shape = .data[[shape_gr]]
+    )
+  ) +
+    #geom_jitter( shape=21, size=3, color="white", width=.5, height=.5) +  # Tassos used jitter
+    geom_point(
+      size = 3,
+      alpha = 1,
+      aes(shape = if (!is.null(shape_gr)) .data[[shape_gr]] else NULL)
+    ) +
+    scale_colour_manual(
+      values = pal[[group_var]],
+      name = "",
+      aesthetics = c("colour", "fill")
+    ) +
+    {
+      if (!is.null(shape_gr) && !is.null(shape)) {
+        scale_shape_manual(values = shape, name = "")
+      }
+    } +
+    # scale_shape_manual(values = c(21, 5, 4), name = "" ) + #specify individual shapes+
+    geom_text(
+      data = txt_df,
+      aes(x = `UMAP 1`, y = `UMAP 2`, label = .data[[txt_var]]),
+      size = 3,
+      hjust = 0,
+      nudge_x = 0.07,
+      color = "gray51"
+    ) +
+    theme_bw(base_size = 14) +
+    theme(
+      line = element_blank(),
+      axis.ticks = element_line(color = "black"),
+      aspect.ratio = 1,
+      axis.title = element_blank()
+    )
+  return(p)
+}
 
 ```
 
-```{r get-new-groups}
-gr <- tibble(ID = colnames(data)[-c(1)]) %>% 
-    left_join(., gr_data, by =c("ID"="svamp_ID")) %>%
-    mutate(
-      pos = case_when(
-        `Fungal culture: C. albicans (y/n)` == "1" |
-        `Fungal culture: Non-albicans candida spp. (y/n)` == 1 ~
-        "pos",
-        TRUE ~ "neg"
-        ), .after="group") %>%
-    mutate(Clin_gr = gr[.$`Clinical score (0-5)`], .after ="group") %>%
-    filter(!(is.na(.$Clin_gr)))
 
+```{r plot-UMAP}
+#| fig-width: 10
+#| fig-height: 7
+
+# shapes: c( "x", "dimond", "circle")
+s <- c(4, 5, 21)
+
+UMAP_fun("RVVC_AS", "txt_id", shape = NULL)
+
+UMAP_fun("RVVC_AS", "txt_clin", shape_gr = "RVVC_AS", shape = s)
+
+UMAP_fun("microb_louvain", "txt_clin")
+
+UMAP_fun("integ_louvain", "txt_clin")
+
+UMAP_fun("metab_louvain", "txt_clin")
+
+```
+
+## Step 5: Shankey plot
+
+```{r shankey-plot}
+#| fig-width: 5.25
+#| fig-height: 5.25
+library(niceRplots)
+
+plot_meta_sankey <- function(
+  vars = c("integ_louvain", "RVVC_AS"),
+  palette = pal1,
+  drop_na = TRUE,
+  return_pdf = TRUE,
+  pdf_name = "sankey"
+) {
+  stopifnot(length(vars) == 2)
+
+  ## Select and clean metadata
+  m <- meta %>%
+    dplyr::select(dplyr::all_of(vars))
+
+  if (drop_na) {
+    m <- tidyr::drop_na(m)
+  }
+
+  ## Extract labels
+  tmp <- m[, vars, drop = FALSE]
+  tmp <- as.data.frame(tmp)
+
+  ## Ensure factors
+  tmp[[1]] <- factor(tmp[[1]])
+  tmp[[2]] <- factor(tmp[[2]])
+
+  ## Plot sankey
+  #pdf( paste0("../results/integ_louvain_sankey.pdf"),width = 1.5*3.5,height = 1.5*3.5)
+  #par(mar=c(4,4,4,4))
+  #plot_sankey(df = tmp, pal = pal1)
+  #dev.off()
+
+  plot_expr <- {
+    plot_sankey(df = tmp, pal = palette)
+  }
+
+  if (return_pdf) {
+    ## Plot sankey
+    pdf(
+      paste0("../Results/sankey/", pdf_name, ".pdf"),
+      width = 1.5 * 3.5,
+      height = 1.5 * 3.5
+    )
+    par(mar = c(4, 4, 4, 4))
+    plot_sankey(df = tmp, pal = palette)
+    dev.off()
+  }
+  #plot_sankey(df = tmp, pal = palette)
+}
+
+# quartz(width = 6, height = 6, dpi = 150)
+v <- c("metab_louvain", "CST")
+plot_meta_sankey(v, pdf_name = "sankey_metab_CST", palette = pal[[v[1]]])
+
+v <- c("microb_louvain", "CST")
+plot_meta_sankey(v, pdf_name = "sankey_microb_CST", palette = pal[[v[1]]])
+
+v <- c("integ_louvain", "RVVC_AS")
+plot_meta_sankey(v, pdf_name = "sankey_integ_RVVC", palette = pal[[v[1]]])
+
+v <- c("metab_louvain", "RVVC_pos")
+plot_meta_sankey(v, pdf_name = "sankey_metab_RVVC_pos", palette = pal[[v[1]]])
+
+v <- c("RVVC_pos", "metab_louvain")
+plot_meta_sankey(v, pdf_name = "sankey_RVVC_pos__metab", palette = pal[[v[1]]])
+
+v <- c("metab_louvain", "BV")
+plot_meta_sankey(v, pdf_name = "sankey_metab_BV", palette = pal[[v[1]]])
+
+#pdf( paste0("../results/integ_louvain_sankey.pdf"),width = 1.5*3.5,height = 1.5*3.5)
+#par(mar=c(4,4,4,4))
+#plot_sankey(df = tmp, pal = pal1)
+#dev.off()
 ```
