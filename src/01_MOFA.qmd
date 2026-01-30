@@ -1,0 +1,1692 @@
+---
+title: "Multi-omics integration with MOFA2"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+params:
+  sparse: false
+---
+
+# Overview
+
+This report presents a **structured MOFA2 analysis** integrating transcriptomics, metagenomics, and metabolomics data. The goal is to identify **latent factors capturing shared and view-specific sources of variation**, and to generate a **set of publication-ready figures** that can be combined into a multi‑panel figure.
+
+**Main outcomes**:
+- Latent factor structure across multi‑omics layers
+- Variance explained per factor and per view
+- Associations between factors and clinical / technical covariates
+- Feature loadings driving key factors
+
+---
+
+## Analysis workflow (step‑by‑step)
+
+1. Load required libraries and define plotting palettes
+2. Load omics data and sample metadata
+3. Harmonise sample identifiers and metadata
+4. Prepare omics matrices for MOFA (features × samples)
+5. Construct and configure the MOFA model
+6. Train the MOFA model
+7. Perform model diagnostics and quality checks
+8. Annotate latent factors using metadata
+9. Generate publication‑ready figures
+
+---
+
+## 1. Libraries and global settings
+
+```{r libraries}
+#| code-fold: true
+#| output: false
+#| warning: false
+#| message: false
+
+library(MOFA2)
+library(tidyverse)
+library(ggpubr)
+library(GGally)
+library(psych)
+library(pheatmap)
+library(cowplot)
+library(RColorBrewer)
+library(readxl)
+library(ComplexHeatmap)
+library(circlize)
+library(patchwork)
+
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
+
+```
+
+Define consistent colour palettes to ensure visual coherence across all figures.
+```{r colour-pallet}
+#| code-fold: true
+select <- dplyr::select
+map <- purrr::map
+rename <- dplyr::rename
+
+pal <- list(
+  subCST = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#91c5de"
+  ),
+  RVVC = c("#EAEAEA", "#fd814e"),
+  BV = c("#EAEAEA", "#fd814e"),
+  NAC = c("#EAEAEA", "#fd814e"),
+  ST = c("#EAEAEA", "#fd814e"),
+  missing_RVVC = c("#EAEAEA", "#fd814e"),
+  Clin = c("#a5c97b", "#cc93cf", "#de9548", "#63d3b4", "#9e8dec", "#902267"),
+  Clin_gr = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_AS = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_pos = c(
+    "#A6CEE3",
+    "#1F78B4",
+    #"#EAEAEA",
+    #"gray",
+    "#e490c4ff",
+    "#c12d88ff"
+  ), # "#FB9A99", "#E31A1C", "#B2DF8A", "#609c5bff", "#FDBF6F", "#FF7F00",, "#CAB2D6", "#6a3d9a" "#e490c4ff", "#c12d88ff"
+  trx_louvain_7 = c(
+    "#de9548",
+    "#cc93cf",
+    "#a5c97b",
+    "#9e8dec",
+    "#63d3b4",
+    "#902267",
+    '#FB5273'
+  ),
+  metab_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273'
+  ),
+  microb_louvain = c(
+    "#de9548",
+    "#cc93cf",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4"
+  ),
+  integ_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#984EA3"
+    #"#B3CDE3"
+  ),
+  "Wet_smear:_clue_cells_(y/n)" = c("#2266ac", "#91c5de"),
+  hyphae = c("#f26386", "#fd814e", "#a4d984", "#fbbc52"),
+  pos = c("#91c5de", "#2266ac"),
+  "Clinical_score_(0-5)" = brewer.pal(6, name = "Reds")
+)
+gr_names <- c("Control", "RVVC", "RVVC_H")
+```
+
+## 2. Data loading
+Multi‑omics matrices and sample metadata are loaded from pre‑processed RDS/CSV files. These data have already undergone quality control and normalisation upstream.
+```{r load_data}
+#| warning: false
+#| message: false
+
+Clin_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp_FINAL.xlsx"
+comb_meta_path <- "../Results/Combined_gr_meta_data.csv"
+
+# meta data
+Clin_data <- read_xlsx(Clin_path, sheet = "Metadata", na = "na")
+meta <- read_csv(comb_meta_path) %>%
+  rename(sample = "svamp_ID") %>%
+  mutate(across(2:25, ~ factor(.x)))
+top_hvg <- read_csv("../Results/Tissue_QC/HVG.csv")
+
+
+TRX_path <- "../Results/MixOmic/Transcriptomics_batch_filt.csv"
+MG_path <- "../Results/MixOmic/Metageonome_vagswab_CLR_transformed.RDS"
+MB_path <- "../Results/MixOmic/Metabolom_Normalized.csv"
+
+# expression data
+TRX_batch <- read.csv(TRX_path, row.names = 1)
+MG_matrix <- readRDS(MG_path)
+MB_matrix <- read.csv(MB_path, row.names = 1)
+
+```
+
+## 3. Metadata harmonisation
+
+#### explore metadata
+```{r expand-some-meta_data_columns}
+#| code-fold: true
+#| eval: false
+
+# old code now moved to Modify_clinical_columns.qmd
+
+# colnames(meta_data)
+anti_depress <- "citalopram|esticipalopran|livotril|sertralin|escitalopram|voxtra|sertrone|sertralun"
+allergy <- "xolair|vantoline|turbohaler|cetrizin|desloratadin|antihistamin|atarax|loratadin|dymista|asthma"
+ADHD <- "concerta|metylphenidate"
+acne <- "isotreonin|dienorette|acne cream"
+gastric_reflux <- "omeprazol"
+anticoagulant <- "markumar"
+high_blood_pressure <- "metoprolol"
+hypotyreos <- "levaxin"
+insomnia <- "propavan"
+endometriosis <- "endovelle"
+other <- "alvedon|birth control pills slinda"
+
+# ---------------
+# medication use
+# ---------------
+# specify which types of medication (create new columns that are factors for the specific categories of medications used)
+
+meta_data_ <- meta_data %>%
+  # select(svamp_ID, `Medications (which?)`) %>%
+  mutate(
+    present = "1", #ifelse(is.na(`Medications (which?)`), NA, "1"),
+    name = `Medications (which?)`,
+    name = case_when(
+      str_detect(name, anti_depress) ~ "antidepressants (y/n)",
+      str_detect(name, allergy) ~ "allergy (y/n)",
+      str_detect(name, ADHD) ~ "ADHD (y/n)",
+      str_detect(name, acne) ~ "acne (y/n)",
+      str_detect(name, endometriosis) ~ "endometriosis (y/n)",
+      str_detect(name, gastric_reflux) ~ "gastric_reflux (y/n)",
+      str_detect(name, high_blood_pressure) ~ "high_blood_pressure (y/n)",
+      str_detect(name, insomnia) ~ "insomnia (y/n)",
+      str_detect(name, anticoagulant) ~ "anticoagulant (y/n)",
+      str_detect(name, hypotyreos) ~ "hypotyreos (y/n)",
+      str_detect(name, other) ~ NA,
+
+      TRUE ~ name
+    ),
+    .after = "Medications (which?)"
+  ) %>%
+  pivot_wider(
+    names_from = name,
+    values_from = present,
+    values_fill = "0"
+  ) %>%
+  select(-"NA")
+
+# ------------------------------
+# Typees of contraceptives
+# ------------------------------
+# contraceptive use, seperate into different factor columns per type
+
+meta_data_ <- meta_data_ %>%
+  # select(svamp_ID, `Current contraceptive (which?)`) %>%
+  mutate(
+    name = `Current contraceptive (which?)`,
+    name = case_when(
+      str_detect(name, "birth control pills") ~ "hormonal (y/n)",
+      str_detect(name, "mirena|kyleena|jaydess|IUD") ~ "hormonal (y/n)",
+      str_detect(name, "implant|vaginal ring") ~ "hormonal (y/n)",
+      str_detect(name, "condom|copper") ~ "non hormonal (y/n)",
+      str_detect(name, "endovelle") ~ "none (y/n)",
+      str_detect(name, "none") ~ "none (y/n)",
+      str_detect(name, "/") ~ NA,
+      TRUE ~ name
+    ),
+    .after = "Current contraceptive (which?)"
+  ) %>%
+  mutate(present = ifelse(is.na(`Current contraceptive (which?)`), NA, "1")) %>%
+  pivot_wider(
+    names_from = name,
+    values_from = present,
+    values_fill = "0"
+  ) %>%
+  mutate(across(
+    any_of(c("hormonal", "non hormonal", "none")),
+    ~ if_else(is.na(`Current contraceptive (which?)`), NA, .x)
+  )) %>%
+  select(-"NA")
+
+
+# --------------------------
+# Problems with intercourse
+# -------------------------
+old_name <- "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren"
+meta_data_ <- meta_data_ %>%
+  rename(`Symptom score (0-5)` = all_of(old_name)) %>%
+  mutate(
+    "gyn_problem_intercourse (weekly/monthly/less/no)" = case_when(
+      `How often can you have intercourse without gynecological problems? (several times a week, y/n)` ==
+        "1" ~ "0",
+      `How often can you have intercourse without gynecological problems? (a couple times a month, y/n)` ==
+        "1" ~ "1",
+      `How often can you have intercourse without gynecological problems? (less often, y/n)` ==
+        "1" ~ "2",
+      `How often can you have intercourse without gynecological problems? (never, y/n)` ==
+        "1" ~ "3",
+      TRUE ~ NA_character_
+    ),
+    .after = "Cervical dysplasia (y/n)"
+  )
+
+# colnames(meta_data_)
+```
+
+```{r metadata_harmonisation}
+#| eval: false
+
+# old code now moved to Modify_clinical_columns.qmd
+
+trx_mapping <- trx_mapping %>%
+  select(sample = svamp_ID, batch = BEA_ID) %>%
+  mutate(batch = str_replace(batch, "_.+", ""))
+
+metab_clus <- metab_clus %>%
+  select(sample = 1, ends_with("_louvain")) %>%
+  mutate_at(., 2:ncol(.), factor)
+
+meta_data_ <- meta_data_ %>%
+  select(
+    sample = "svamp_ID",
+    6:17, # Symptom score + Clinical score
+    20:25, # Wet smear
+    29:36, # Fungal culture
+    38:42, # general confounders
+    c(47, 49:51), # relationship
+    c(54, 56, 59, 98:106), # drugs
+    c(61, 64:67, 69), # diesases
+    c(90, 71:73, 99:106, 75:78, 81, 83, 84, 87:88) # reproductive info
+  )
+
+BV <- c("S84_BL", "S38", "S44", "S60", "S20")
+
+meta <- meta_groups %>%
+  dplyr::rename(sample = "svamp_ID") %>%
+  left_join(CST_info, by = "sample") %>%
+  left_join(metab_clus, by = "sample") %>%
+  #left_join(trx_mapping, by = "sample") %>%
+  mutate(
+    Lacto = ifelse(
+      CST == "I",
+      "Lacto_c",
+      ifelse(CST == "III", "Lacto_i", "other")
+    )
+  ) %>%
+
+  left_join(meta_data_, by = "sample") %>%
+  rename_with(~ gsub(" ", "_", .x)) %>%
+  mutate("Clinical_score_(0-5)" = as.character(`Clinical_score_(0-5)`))
+
+
+```
+
+## 4. Prepare MOFA input
+
+### 4.1 Assemble omics views
+MOFA describes each omic dataset as a "view". One of the possible inputs to mofa is a list of matrixes for each view.
+Each omics layer is formatted as a **features × samples** matrix. Sample ordering needs to be the same.
+The top 5000 most higly variable genes identified in the `QC_Transcriptomics.qmd` script is used to filter the transcriptomics data.
+```{r assemble_views}
+
+# remove long strain id, replace with int
+MG_matrix <- MG_matrix[["clr_data"]][["strain"]]
+new_names <- sub("\\s+\\S+$", "", colnames(MG_matrix)) # remove strain id
+new_names <- make.unique(new_names, sep = " ") # Make names unique
+colnames(MG_matrix) <- new_names # Assign new names
+
+# select 5000 most higly variable genes
+TRX_HVG <- TRX_batch[top_hvg$gene[1:5000], ]
+
+views <- list(
+  Transcriptomics = as.matrix(TRX_HVG),
+  Metagenomics = unclass(t(MG_matrix)),
+  Metabolomics = as.matrix(MB_matrix)
+)
+```
+
+### 4.2 Convert matrices to long format
+The matrix list input is only valid if you have matching samples for all "views". If you wish to include samples that are not "complete" in this sense the long format version is another input alternative to create a MOFA model
+```{r omics_to_long}
+omics_to_long <- function(mat, view_name) {
+  mat %>%
+    as.data.frame() %>%
+    rownames_to_column("feature") %>%
+    pivot_longer(
+      cols = -feature,
+      names_to = "sample",
+      values_to = "value"
+    ) %>%
+    mutate(view = view_name)
+}
+
+mofa_df <- imap_dfr(views, ~ omics_to_long(.x, .y))
+```
+
+### 4.3 Sample criteria df
+The tibble called m shows what samples excist across views for each study participant
+```{r identify-samples-overlap}
+# select samples to include
+m <- mofa_df %>%
+  distinct(sample, view) %>%
+  mutate(present = TRUE) %>%
+  pivot_wider(
+    id_cols = sample,
+    names_from = view,
+    values_from = present,
+    values_fill = FALSE
+  )
+
+m <- m %>%
+  mutate(
+    n_views = rowSums(across(-sample)),
+    at_least_two = n_views >= 2,
+    all_BL = !(grepl("_3M|_1W|_6M", .$sample)),
+    matched = n_views == 3
+  )
+
+write_csv(m, "../Results/Sample_omic_table.csv")
+# m <- write_csv("../Results/Sample_omic_table.csv")
+
+knitr::kable(head(m))
+```
+
+Based on the various criteria we filter out the samples we do not wish to include from our long format table
+```{r select-samples}
+
+mofa_df <- mofa_df %>%
+  filter(sample %in% m$sample[m$at_least_two & m$all_BL])
+
+meta_ <- meta %>% filter(sample %in% m$sample[m$at_least_two & m$all_BL])
+```
+
+## 5. Sample heatmap overview
+With our samples selected we can now plot a overviw heatmap showing all our included samples, which omic views they are represented in and how they are distributed by some of our groups of intrest
+```{r heatmap-function}
+#| code-fold: true
+
+heatmap_prepp <- function(keep_s, vars, arrange_by = "Clinical_score_(0-5)") {
+  ### ------------------------------------------------------------
+  ### 1. Select symptom columns and prepare binary clinical data
+  ### ------------------------------------------------------------
+
+  # Extract only samples of interest and symptom score columns
+  # Convert TRUE/FALSE columns to numeric 0/1 and clean column names
+  df_bin <- m %>%
+    #filter(sample %in% m$sample[m$at_least_two & m$all_BL]) %>%
+    filter(sample %in% m$sample[keep_s]) %>%
+
+    left_join(
+      .,
+      select(meta, sample, RVVC_AS, RVVC_pos, "Clinical_score_(0-5)"),
+      by = "sample"
+    ) %>%
+    mutate(
+      RVVC_AS = factor(RVVC_AS, levels = c("RVVC", "Control", "RVVC_AS"))
+    ) %>%
+    mutate(
+      RVVC_pos = factor(
+        RVVC_pos,
+        levels = c(
+          "RVVC_pos",
+          "RVVC_neg",
+          "Control_pos",
+          "Control_neg"
+          #"NA_pos",
+          #"NA_neg"
+        )
+      )
+    ) %>%
+    arrange(desc(n_views)) %>%
+    arrange(RVVC_pos) %>%
+    arrange(desc(`Clinical_score_(0-5)`)) %>%
+    arrange(
+      desc(.data[[arrange_by]])
+    ) %>%
+    select(1:4) %>%
+    mutate(across(where(is.logical), as.integer)) %>%
+    column_to_rownames("sample") # convert sample ID to rownames
+
+  # Convert to numeric matrix for ComplexHeatmap
+  mat <- as.matrix(df_bin)
+
+  # Determine row annotation height scaling factor
+  my_h <<- 0.1 * nrow(mat)
+
+  ### ------------------------------------------------------------
+  ### 2. Prepare annotation dataframe (metadata)
+  ### ------------------------------------------------------------
+
+  annot_col <- meta %>%
+    filter(sample %in% rownames(df_bin)) %>% # keep same samples as heatmap matrix
+    arrange(match(sample, rownames(df_bin))) %>%
+    select(sample, any_of(vars)) %>% # select annotation variables
+    mutate(across(all_of(vars), ~ factor(.x))) %>%
+    #mutate(across(1:length(vars) + 1, ~ factor(.x))) %>% # ensure annotations are factors
+    column_to_rownames("sample") # convert sample ID to rownames
+
+  # Quick check: ensure annotation rows match heatmap rows
+  dim(mat)
+  dim(annot_col)
+
+  setdiff(rownames(mat), rownames(annot_col))
+
+  ### ------------------------------------------------------------
+  ### 4. Define row annotations for heatmap (ComplexHeatmap)
+  ### ------------------------------------------------------------
+
+  annot <- HeatmapAnnotation(
+    df = annot_col[, c(vars)],
+    which = c("row"),
+    #which = c("column"),
+    # Clin_gr = annot_col$Clin_gr, # binned clinical grade
+    # "Clinical_score_(0-5)" = annot_col$`Clinical_score_(0-5)`, # raw clinical score
+    # RVVC_AS = annot_col$RVVC_AS, # sample group
+    # BV = annot_col$BV, # sample group
+    # RVVC = annot_col$RVVC, # sample group
+    # hyphae = annot_col$hyphae, # sample group
+
+    show_annotation_name = TRUE, # show labels
+    annotation_name_gp = gpar(fontsize = 8), # label font size
+
+    # Legend formatting
+    annotation_legend_param = list(
+      grid_height = unit(.1, "mm"),
+      grid_width = unit(2, "mm"),
+      title = "",
+      labels_gp = gpar(fontsize = 7),
+      title_gp = gpar(fontsize = 8)
+    ),
+
+    simple_anno_size = unit(.3, "cm"), # annotation row height
+
+    # Colors for each annotation variable
+    na_col = "white",
+    col = pal[vars] %>% imap(., ~ set_names(.x, levels(annot_col[[.y]])))
+  )
+  ### ------------------------------------------------------------
+  ### Create heatmap
+  ### ------------------------------------------------------------
+  H <- Heatmap(
+    mat,
+    width = unit(ncol(mat) * 5, "mm"),
+    height = unit(nrow(mat) * 2.2, "mm"),
+    name = "Symptom Present",
+    col = col_fun,
+
+    # vertical orientation:
+    right_annotation = annot,
+    cluster_rows = FALSE,
+    row_order = rownames(mat),
+
+    row_names_side = "right",
+
+    column_names_rot = 90,
+    row_names_gp = gpar(fontsize = 7),
+    heatmap_legend_param = list(
+      at = c(0, 1),
+      labels = c("No", "Yes")
+    ),
+    #   cell_fun = function(j, i, x, y, width, height, fill) {
+    #   grid.rect(x, y, width, height, gp = gpar(col = "grey70", lwd = 0.5, fill = NA))
+    # }
+    layer_fun = function(j, i, x, y, width, height, fill) {
+      # Draw cell borders without overwriting fill
+      grid.rect(
+        x = x,
+        y = y,
+        width = width,
+        height = height,
+        gp = gpar(col = "grey70", lwd = 0.4, fill = NA)
+      )
+    }
+  )
+  #return(list(mat = mat, annot = annot, h = my_h))
+  return(H)
+}
+
+
+```
+
+```{r Sample-info-heatmap}
+#| code-fold: show
+
+### ------------------------------------------------------------
+### Color function for the symptom heatmap
+### ------------------------------------------------------------
+col_fun <- colorRamp2(
+  c(0, 0.6, 1),
+  c("white", "white", "#e05e85")
+)
+
+### ------------------------------------------------------------
+### Prepare annotation df and matrix
+### ------------------------------------------------------------
+
+vars <- c(
+  "Clinical_score_(0-5)",
+  "Clin_gr",
+  "RVVC",
+  #"RVVC_AS",
+  "RVVC_pos",
+  "BV",
+  "NAC",
+  "missing_RVVC",
+  "ST"
+)
+
+keep_s <- rep(TRUE, nrow(m)) # 152 every samples incl. follow up
+keep_s <- m$all_BL # 91 samples
+keep_s <- m$matched # 70 samples
+keep_s <- m$at_least_two & m$all_BL # 89 samples
+
+H <- heatmap_prepp(keep_s, vars)
+
+H <- heatmap_prepp(
+  keep_s,
+  c("RVVC_pos", "RVVC_AS", "Clinical_score_(0-5)"),
+  arrange_by = "RVVC_pos"
+)
+
+H <- heatmap_prepp(
+  keep_s,
+  c("pos", "RVVC_pos", "Clinical_score_(0-5)"),
+  arrange_by = "RVVC_AS"
+)
+# quartz(width = 6, height = 6, dpi = 150)
+# draw(H)
+```
+
+```{r save-plot}
+#| include: false
+#| eval: true
+#| output: true
+#| fig-width: 8.5
+#| fig-height: 11
+
+# !expr my_h
+
+# Heatmap global options:
+# ht_opt$COLUMN_ANNO_PADDING = unit(.05, "cm")
+# ht_opt$HEATMAP_LEGEND_PADDING = unit(-0, "cm") #unit(c(0, 0, 0, -1), "cm") #b,l,t,r
+# ht_opt$TITLE_PADDING = unit(.05, "cm")
+# ht_opt$DIMNAME_PADDING = unit(.05, "cm")
+
+# ht_opt(LEGEND_GAP = unit(18, "mm"))
+
+H_g <- draw(
+  H,
+  heatmap_legend_side = "bottom",
+  merge_legend = F,
+  background = NA,
+  show_annotation_legend = FALSE,
+  legend_gap = unit(5, "mm"),
+  padding = unit(c(3, 9, -2, 3), "mm") # outer padding
+) # b,l,t,r
+
+H_g
+
+################
+# COMBINE PLOTS #
+################
+# dev.new(width=3.5, height=7.48, noRStudioGD = TRUE)
+#(B <- plot_grid(H_epi, H_sub, labels = c('B'), ncol = 1, rel_heights = c(1, .7)))
+
+################
+# SAVE RESULTS #
+################
+# quartz(width = 6, height = 6, dpi = 150)
+png(
+  file = paste0("../Results/Sample_HT/BL_89.png"),
+  units = "in",
+  res = 600,
+  #width = 8.5, height = 10 # Epi
+  width = 8.5,
+  height = 11 # 11 # my_h # 17 (all samples)
+)
+H_g
+#draw(H)
+dev.off()
+```
+
+
+```{r filter-samples-for-UMAP}
+# filter samples from views for UMAP ploting
+m_ <- m %>%
+  filter(sample %in% .$sample[m$at_least_two & m$all_BL])
+
+v <- views %>%
+  imap(., ~ .x[, m_$sample[m_[[.y]]]])
+```
+
+## Step 5: Unsupervised UMAPs 
+We plot unsupervised umaps coloured by different groups of intrest in order to see how they cluster across views. 
+
+!NB should think about doing with and without HVGs only
+
+This first code is taken from Paulos analysis of the metabolomics data.
+It gives more control over the knn clustering by perfoming it in a seperate step and then supplying the knn to the umap function.
+The other alternative bellow is just supplying the data to umap, which then runs the PCA and knn internaly with default setings. 
+```{r Paulos-UMAP}
+#| eval: false
+#| code-fold: true
+
+#### UMAP analysis ####
+set.seed(1)
+UMAP_df <- v %>%
+  map(., ~ t(.x)) %>%
+  # PCA
+  map(., ~ prcomp(.x, scale = T, center = T)) %>%
+  # KNN graph
+  map(
+    .,
+    ~ RcppHNSW::hnsw_knn(as.matrix(.x$x[, 1:10]), k = 10, distance = "cosine")
+  ) %>%
+
+  # UMAP
+  map(
+    .,
+    ~ uwot::umap(
+      X = NULL,
+      nn_method = .x,
+      n_components = 2,
+      ret_extra = c("model", "fgraph"),
+      verbose = T,
+      min_dist = 0.1,
+      spread = 0.3,
+      approx_pow = TRUE,
+      repulsion_strength = .2,
+      negative_sample_rate = 30,
+      n_epochs = 200,
+      n_threads = 8
+    )$embedding
+  ) %>%
+  imap(
+    .,
+    ~ tibble(
+      "UMAP 1" = .x[, 1],
+      "UMAP 2" = .x[, 2],
+      "ID" = colnames(v[[.y]])
+    )
+  ) %>%
+  map(., ~ left_join(., annot_col, by = c("ID" = "sample")))
+```
+
+```{r UMAP-function}
+#| code-fold: true
+
+UMAP_fun <- function(
+  umap_df,
+  group_var,
+  txt_var = NULL,
+  shape_gr = NULL,
+  shape = NULL,
+  title = ""
+) {
+  if (is.null(shape_gr)) {
+    point <- geom_point(size = 3, alpha = 1, shape = 21)
+  } else {
+    point <- geom_point(
+      size = 3,
+      alpha = 1,
+      aes(shape = if (!is.null(shape_gr)) .data[[shape_gr]] else NULL)
+    )
+  }
+
+  p <- ggplot(
+    umap_df,
+    aes(
+      x = `UMAP 1`,
+      y = `UMAP 2`,
+      #shape = RVVC_AS,
+      fill = .data[[group_var]],
+      color = .data[[group_var]]
+    )
+  ) +
+    point +
+    #geom_jitter( shape=21, size=3, color="white", width=.5, height=.5) +  # Tassos used jitter
+
+    scale_fill_manual(
+      values = pal[[group_var]],
+      na.value = "transparent",
+      name = ""
+      #aesthetics = c("colour", "fill")
+    ) +
+    guides(fill = "none") +
+    scale_colour_manual(
+      values = pal[[group_var]],
+      na.value = "gray",
+      name = ""
+    ) +
+    {
+      if (!is.null(shape_gr) && !is.null(shape)) {
+        scale_shape_manual(values = shape, name = "")
+      }
+    } +
+    # scale_shape_manual(values = c(21, 5, 4), name = "" ) + #specify individual shapes+
+    {
+      if (!is.null(txt_var)) {
+        geom_text(
+          data = umap_df,
+          aes(x = `UMAP 1`, y = `UMAP 2`, label = .data[[txt_var]]),
+          size = 2,
+          hjust = 0,
+          nudge_x = 0.07,
+          color = "gray51"
+        )
+      }
+    } +
+    ggtitle(title) +
+    theme_bw(base_size = 14) +
+    theme(
+      # point = element_point(shape = 21),
+      line = element_blank(),
+      axis.ticks = element_line(color = "black"),
+      aspect.ratio = 1,
+      axis.title = element_blank()
+    )
+  return(p)
+}
+
+
+#### UMAP plotting by groups ####
+
+# save plot to file
+#ggsave(paste0("./Figures/09/", "Bulk_UMAP.png"), p)
+
+```
+
+```{r plot-UMAP}
+#| fig-width: 14
+#| fig-height: 5
+#| code-fold: true
+#| warning: false
+
+#### group information ####
+annot_col <- meta %>%
+  #filter(sample %in% .$sample[m$at_least_two & m$all_BL]) %>%
+  # select(-`Age (years)`) %>%
+  select(
+    1:22,
+    `Clinical_score_(0-5)`
+  ) %>%
+  mutate(across(2:ncol(.), ~ factor(.x))) %>%
+  mutate(
+    txt_clin = ifelse(
+      grepl("0", .$`Clinical_score_(0-5)`),
+      NA,
+      as.character(.$`Clinical_score_(0-5)`)
+    )
+  ) %>%
+  mutate(txt_id = ifelse(RVVC == "RVVC", .$sample, NA))
+
+#### UMAP analysis ####
+set.seed(1)
+
+umap_dfs <- v %>%
+  map(., ~ t(.x)) %>%
+  map(
+    .,
+    ~ uwot::umap(
+      .x,
+      #seed = 123,
+      seed = 463,
+      n_neighbors = 15,
+      #metric = "cosine",
+      init = "spectral",
+      scale = T
+    )
+  ) %>%
+  map(
+    .,
+    ~ tibble(
+      "UMAP 1" = .x[, 1],
+      "UMAP 2" = .x[, 2],
+      "ID" = rownames(.x)
+    )
+  ) %>%
+  map(., ~ left_join(., annot_col, by = c("ID" = "sample")))
+
+meta_clus <- colnames(annot_col)
+color_vars <- c(
+  "pos",
+  "trx_louvain_7",
+  "metab_louvain",
+  "microb_louvain",
+  "integ_louvain",
+  "Clinical_score_(0-5)",
+  "RVVC_pos",
+  "RVVC_AS"
+) %>%
+  set_names(.)
+
+#### Combine and save plots ####
+make_umap_panel <- function(var, umap_dfs, outdir = "../Results/UMAP/") {
+  # create plots for each dataset
+  p_list <- imap(
+    umap_dfs,
+    ~ UMAP_fun(.x, var, "txt_clin", title = .y)
+  )
+
+  # combine with shared legend
+  p_combined <- patchwork::wrap_plots(p_list) +
+    patchwork::plot_layout(guides = "collect") &
+    theme(legend.position = "right")
+
+  # safe filename
+  fname <- gsub("[^A-Za-z0-9_]", "_", var)
+
+  # save
+  ggsave(
+    filename = paste0(outdir, "UMAP_", fname, ".png"),
+    plot = p_combined,
+    width = 14,
+    height = 5,
+    dpi = 300
+  )
+
+  return(p_combined)
+}
+
+plots <- map(color_vars, ~ make_umap_panel(.x, umap_dfs))
+plots
+# use shapes:
+# UMAP_fun(umap_dfs$Metabolomics, "trx_louvain_7", "txt_clin", shape_gr = "pos", shape = c(21, 24))
+# no shapes
+# UMAP_fun(umap_dfs$Metabolomics, "trx_louvain_7", "BV")
+```
+
+
+## 5. MOFA model construction
+A MOFA object is created and configured with default data and training options. The number of latent factors is set a priori and can be tuned depending on variance explained.
+### Data options
+
+<details>
+<summary> Important arguments</summary>
+
+- **`scale_groups`**  
+  Scale groups to the same total variance?  
+  *Default:* `FALSE`
+
+- **`scale_views`**  
+  Scale views to the same total variance?  
+  *Default:* `FALSE`
+
+- **`views`**  
+  Names of the views to include in the model.
+
+- **`groups`**  
+  Names of the sample groups.
+</details>
+
+### Model options
+
+<details>
+<summary> Important arguments</summary>
+
+- **`num_factors`**  
+  Number of latent factors.
+
+- **`likelihoods`**  
+  Likelihood per view.  
+  Options: `"gaussian"`, `"poisson"`, `"bernoulli"`  
+  By default, likelihoods are inferred automatically.
+
+- **`spikeslab_factors`**  
+  Use spike-and-slab sparsity prior on the factors?  
+  *Default:* `FALSE`
+
+- **`spikeslab_weights`**  
+  Use spike-and-slab sparsity prior on the weights?  
+  *Default:* `TRUE`
+
+- **`ard_factors`**  
+  Use Automatic Relevance Determination (ARD) prior on the factors?  
+  *Default:* `TRUE` when using multiple groups.
+
+- **`ard_weights`**  
+  Use Automatic Relevance Determination (ARD) prior on the weights?  
+  *Default:* `TRUE` when using multiple views.
+</details>
+
+### Training options
+
+<details>
+<summary> Important arguments</summary>
+
+- **`maxiter`**  
+  Maximum number of training iterations.  
+  *Default:* `1000`
+
+- **`convergence_mode`**  
+  Convergence speed of the algorithm.  
+  Options: `"fast"`, `"medium"` (default), `"slow"`  
+  For exploratory analyses, `"fast"` is usually sufficient.
+
+- **`seed`**  
+  Random seed for reproducibility.
+</details>
+
+
+We use default options, however it is recomended to run the model several times with different seeds. In one of the papers published by MOFAS authors, they ran the model ~24 times, before picking the model with the highest elbo score.
+```{r mofa_setup}
+MOFAobject <- create_mofa_from_df(mofa_df)
+
+data_opts <- get_default_data_options(MOFAobject)
+model_opts <- get_default_model_options(MOFAobject)
+train_opts <- get_default_training_options(MOFAobject)
+
+#model_opts$num_factors <- 10
+train_opts$convergence_mode <- "medium"
+train_opts$seed <- 1234
+
+
+```
+
+
+The functions bellow runs the model with different seeds and saves the model and a table with all seeds and corresponding elbo scores as output
+```{r train-mofa-model}
+#| code-fold: true
+#| eval: false
+#| output: false
+#| code-summary: "Train MOFA model"
+#| warning: false
+#| message: false
+
+seeds <- c(3, 100, 50)
+
+run_mofa_with_seed <- function(seed) {
+  # Make a local copy (important!)
+  train_opts$seed <- seed
+
+  MOFAobject <- prepare_mofa(
+    MOFAobject,
+    data_options = data_opts,
+    model_options = model_opts,
+    training_options = train_opts
+  )
+
+  MOFAmodel <- run_mofa(
+    MOFAobject,
+    outfile = paste0("../Results/MOFA/MOFA_allBL_seed_", seed, ".hdf5"),
+    use_basilisk = TRUE
+  )
+
+  elbo <- max(get_elbo(MOFAmodel))
+
+  # Return a single-row data frame
+  tibble(
+    seed = seed,
+    elbo = elbo
+  )
+}
+
+# existing training code stays the same
+elbo_table <- map_dfr(seeds, ~ run_mofa_with_seed(.x))
+write_csv(elbo_table, "../Results/MOFA/elbo_table.csv")
+best_seed <- elbo_table$seed[which.max(elbo_table$elbo)]
+
+
+```
+
+MOFAobject without transcriptomics batch correction
+```{r model-noBatch}
+#| eval: false
+
+X <- readRDS("../Results/MixOmic/X_object.RDS")
+views <- list(
+  Transcriptomics = t(X$strain$TR),
+  Metagenomics = t(X$strain$MG),
+  Metabolomics = t(X$species$MB)
+)
+
+MOFAobject <- create_mofa(views)
+
+data_opts <- get_default_data_options(MOFAobject)
+model_opts <- get_default_model_options(MOFAobject)
+model_opts$num_factors <- 10
+
+train_opts <- get_default_training_options(MOFAobject)
+train_opts$convergence_mode <- "medium"
+train_opts$seed <- 1234
+
+MOFAobject <- prepare_mofa(
+  MOFAobject,
+  data_options = data_opts,
+  model_options = model_opts,
+  training_options = train_opts
+)
+MOFAmodel <- run_mofa(
+  MOFAobject,
+  outfile = "../Results/MOFA/MOFA_noBatch_strain.hdf5",
+  use_basilisk = TRUE
+)
+```
+
+## 6. Load trained MOFA model
+We load the model with the highest elbo score
+```{r load_model}
+#| eval: true
+#| include: true
+#| warning: false
+#| message: false
+#| tbl-colwidths: [60,40]
+
+elbo_table <- read_csv("../Results/MOFA/elbo_table.csv")
+knitr::kable(elbo_table, )
+best_seed <- elbo_table$seed[which.max(abs(elbo_table$elbo))]
+
+MOFAmodel <- load_model(
+  #"../Results/MOFA/MOFA_matched_seed_50.hdf5"
+  paste0("../Results/MOFA/MOFA_allBL_seed_", best_seed, ".hdf5")
+)
+
+# existing training code stays the same
+samples_metadata(MOFAmodel) <- samples_metadata(MOFAmodel)[, c(
+  "sample",
+  "group"
+)] %>%
+  left_join(meta, by = "sample")
+
+# batch corrected tr, ~17 000 genes, strain lvl, no followup samples
+"../Results/MOFA/MOFA_matched_noM3_strain.hdf5"
+# batch corrected tr, ~17 000 genes, strain lvl + 7 M3 follow up samples
+"../Results/MOFA/MOFA_w73M_strain.hdf5"
+# same as above + 9 extra RVVC samples without matching trx
+"../Results/MOFA/MOFA_w9RVVC_strain.hdf5"
+
+# same as above + all 154 samples
+"../Results/MOFA/MOFA_all_154_samples_strain.hdf5"
+```
+
+## 7. Model diagnostics
+
+```{r view-distribution}
+#| fig-width: 8
+#| fig-height: 6
+
+# inspect data distribution
+ggdensity(mofa_df, x = "value", fill = "gray70") +
+  facet_wrap(~view, nrow = 3, scales = "free") # + xlim(0.5,)
+```
+
+We first assess the overall quality of the model by inspecting variance explained and factor correlations.
+```{r model-overview}
+#| fig-width: 8
+#| fig-height: 2
+
+# inspect the model:
+plot_data_overview(MOFAmodel)
+MOFAmodel
+
+```
+
+```{r variance_explained}
+#| warning: false
+#| message: false
+#| fig-width: 9.5
+#| fig-height: 2.7
+
+p1 <- plot_variance_explained(MOFAmodel, plot_total = TRUE)[[2]]
+p2 <- plot_variance_explained(MOFAmodel, factors = 1:10) #+
+
+#+
+#theme(axis.text.x = element_text(angle = 45, hjust = 0.8, vjust = 0.9))
+# plot_grid(plotlist = list(p1, p2), ncol = 2)
+
+p <- plot_data_overview(MOFAmodel) +
+  theme(plot.margin = unit(c(1, 0, 1, 1), "cm"))
+p1 <- p1 +
+  coord_flip() +
+  theme_nothing() +
+  theme(plot.margin = unit(c(1, 0.1, 1, 0), "cm"))
+p2 <- p2 +
+  coord_flip() +
+  theme(axis.text.y = element_blank(), legend.position = "none") +
+  theme(plot.margin = unit(c(1, 0.5, 1, 0), "cm")) +
+  scale_y_discrete(labels = 1:10)
+
+# quartz(width = 9.5, height = 2.7)
+plot_grid(plotlist = list(p, p2, p1), ncol = 3, align = c("h"))
+
+# p$layers[[1]]$aes_params$alpha
+```
+
+#### Correlation between factors
+A good sanity check is to verify that the Factors are largely uncorrelated. In MOFA there are no orthogonality constraints such as in Principal Component Analysis, but if there is a lot of correlation between Factors this suggests a poor model fit. Reasons could be that you used too many factors or perhaps the normalisation is not adequate.
+
+```{r factor_correlations}
+plot_factor_cor(MOFAmodel)
+```
+
+## 8. Factor visualisation
+When running MOFA the first time, the internal quality control warned that at least one of the factors was strongly corelated with the total number of expressed features in one of the views. This is typically a result of batch effect. As seen in the plot bellow Factor one perfectly seperates the two batches of the transcriptomics data. Therfore I went back and performed batch correction in the `QC_Transcriptomics.qmd` script.
+```{r factors_by_batch}
+MOFAbatch <- load_model(
+  "../Results/MOFA/MOFA_noBatch_strain.hdf5"
+)
+samples_metadata(MOFAbatch) <- samples_metadata(MOFAbatch) %>%
+  left_join(meta, by = "sample")
+
+plot_factors(
+  MOFAbatch,
+  factors = "all",
+  color_by = "batch"
+)
+```
+
+```{r factors_by_clinical}
+#| fig-width: 10
+#| fig-height: 5
+
+p <- plot_factors(
+  MOFAmodel,
+  factors = "all",
+  color_by = "Clinical_score_(0-5)"
+) +
+  scale_fill_manual(values = pal$`Clinical_score_(0-5)`, na.value = "white")
+
+p
+
+plot_factors(
+  MOFAmodel,
+  factors = c(1, 3),
+  color_by = "Clin_gr"
+) +
+  stat_ellipse(
+    #aes(color = RVVC_AS, fill = RVVC_AS),
+    geom = "polygon",
+    alpha = 0.25
+  ) +
+  scale_fill_manual(values = pal$Clin_gr, na.value = "white")
+
+# quartz(width = 6, height = 6, dpi = 150)
+
+```
+
+
+```{r Factor-grid-dist-plot}
+#| fig-width: 7
+#| fig-height: 5
+
+p <- plot_factors(
+  MOFAmodel,
+  factors = c(1, 2, 3),
+  dot_size = 1,
+  color_by = "RVVC_AS"
+) +
+  scale_fill_manual(
+    values = pal$RVVC_AS,
+    na.value = "transparent",
+    aesthetics = c("colour", "fill")
+  )
+p
+
+ggsave(
+  filename = paste0("../Results/Factor_plots/", "Factor_1-3_grid", "", ".png"),
+  plot = p,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+```
+
+```{r Factor-violin-plots}
+#| code-fold: true
+#| warning: false
+#| message: false
+#| fig-width: 10
+#| fig-height: 5
+
+plot_factor_set <- function(
+  MOFAmodel,
+  factors,
+  color_vars,
+  pal,
+  out_file,
+  height = 5,
+  width_per_plot = 2.8
+) {
+  plots <- imap(
+    color_vars,
+    ~ plot_factor(
+      MOFAmodel,
+      factor = factors,
+      color_by = .x,
+      dot_size = 4,
+      dodge = TRUE,
+      stroke = 0.4,
+      add_violin = TRUE,
+      add_boxplot = FALSE
+    ) +
+      scale_fill_manual(values = pal[[.x]], na.value = "white") +
+      theme(
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+      )
+  )
+
+  p <- patchwork::wrap_plots(plots, nrow = 1) +
+    patchwork::plot_layout(guides = "collect", axis_titles = "collect") &
+    theme(legend.position = "bottom")
+
+  ggsave(
+    filename = out_file,
+    plot = p,
+    width = width_per_plot * length(color_vars),
+    height = height,
+    dpi = 300
+  )
+
+  p
+}
+
+meta_clus <- colnames(annot_col)
+
+fctors <- c(
+  "trx_louvain_7",
+  "metab_louvain",
+  "microb_louvain",
+  "integ_louvain"
+) %>%
+  set_names()
+
+fctors <- c(
+  "RVVC_AS",
+  "pos",
+  "Clinical_score_(0-5)",
+  "RVVC_pos",
+  "metab_louvain"
+) %>%
+  set_names()
+
+map(
+  c(1, 2, 3),
+  ~ plot_factor_set(
+    MOFAmodel = MOFAmodel,
+    factors = .x,
+    color_vars = fctors,
+    pal = pal,
+    out_file = paste0("../Results/Factor_plots/Factor", .x, "_gr", ".png")
+  )
+)
+```
+
+## 9. Feature-level analysis
+
+```{r top_weights}
+#| fig-cap: "Top metagenomic features driving Factor 2"
+#| fig-width: 10
+#| fig-height: 5
+
+views <- c("Transcriptomics", "Metabolomics", "Metagenomics")
+p1 <- map(
+  views,
+  ~ plot_weights(
+    MOFAmodel,
+    view = .x,
+    factor = 1,
+    nfeatures = 10,
+    text_size = 3
+  )
+)
+p2 <- map(
+  views,
+  ~ plot_top_weights(
+    MOFAmodel,
+    factor = 1,
+    view = .x,
+    nfeatures = 10
+  )
+)
+p <- map2(p1, p2, ~ plot_grid(plotlist = list(.x, .y))) %>% set_names(., views)
+```
+
+```{r transcriptomics_heatmap}
+#| fig-width: 10
+#| code-fold: true
+
+Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray")#| fig-height: 5
+pal2 <- c("#2266ac", "#91c5de")
+
+meta_headers <- colnames(samples_metadata(MOFAmodel))
+gr_df <- samples_metadata(MOFAmodel)[, c(
+  "sample",
+  "pos",
+  #"Clin_gr",
+  "BV",
+  "RVVC_pos",
+  "Wet smear: clue cells (y/n)",
+  "metab_louvain"
+)] %>% #"sample",
+  mutate_at(., 1:ncol(.), factor)
+rownames(gr_df) <- gr_df$sample
+
+ann_colors = list(
+  metab_louvain = set_names(c(pal$metab_louvain), levels(gr_df$metab_louvain)),
+  "Wet smear: clue cells (y/n)" = set_names(
+    c(pal$pos),
+    levels(gr_df$`Wet smear: clue cells (y/n)`)
+  ),
+  BV = set_names(c(pal$BV), levels(gr_df$BV)),
+  Clin_gr = set_names(c(pal$Clin_gr), levels(gr_df$Clin_gr)),
+  pos = set_names(c(pal$pos), levels(gr_df$pos)),
+  RVVC_AS = set_names(c(pal$RVVC_AS), levels(gr_df$RVVC_AS)),
+  RVVC_pos = set_names(c(pal$RVVC_pos), levels(gr_df$RVVC_pos)),
+  WS_lacto = set_names(
+    c(pal$pos),
+    levels(gr_df$`Wet smear: amount of lactobacilli (normal/decreased)`)
+  )
+)
+
+plot_data_heatmap(
+  MOFAmodel,
+  view = "Transcriptomics",
+  factor = 1,
+  features = 20,
+  annotation_samples = gr_df[, -1], #gr_df[,-1], "Clin_gr"
+  denoise = TRUE,
+  scale = "row",
+  annotation_colors = ann_colors
+)
+
+plot_data_heatmap(
+  MOFAmodel,
+  view = "Metabolomics",
+  factor = 4,
+  features = 20,
+  annotation_samples = "metab_louvain", #gr_df[,-1], "Clin_gr"
+  denoise = TRUE,
+  scale = "row",
+  annotation_colors = ann_colors
+)
+```
+
+plot_data_heatmap has an interesting argument to “beautify” the heatmap: `denoise = TRUE`. Instead of plotting the (noisy) input data, we can plot the data reconstructed by the model, where noise has been removed:
+
+```{r divide-groups-data}
+p <- plot_factors(
+  MOFAmodel,
+  factors = c(1, 2),
+  color_by = "Clinical_score_(0-5)",
+  shape_by = "pos",
+  dot_size = 2.5,
+
+  show_missing = T
+) +
+  scale_fill_manual(values = pal$`Clinical_score_(0-5)`, na.value = "white")
+
+p <- p +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = (-0), linetype = "dashed")
+
+p
+```
+
+## Factor covariate correlation
+
+```{r covariates-factor-correlation}
+#samples_metadata(MOFAmodel) <- samples_metadata(MOFAobject)
+covariates <- samples_metadata(MOFAmodel) %>% colnames()
+
+# remove columns
+# covariates <- covariates[!(grepl("Follow_up", covariates))]
+Clin_info <- list(
+  Clin_score = covariates[22:34], # Clinical score + Symptom score
+  Wet_smear = covariates[35:40], # Wet smear
+  Fungal_culture = covariates[41:48], # Fungal culture
+  confounders = covariates[53:57], # general confounders
+  relationship = covariates[58:61], # relationship
+  drugs = covariates[62:78], # drugs
+  reproductive_info = covariates[80:94] # reproductive info
+)
+
+# reproductive info
+# quartz(width = 6, height = 6, dpi = 100)
+
+p <- imap(
+  Clin_info,
+  ~ wrap_elements(
+    panel = ~ correlate_factors_with_covariates(
+      MOFAmodel,
+      covariates = .x,
+      plot = "r", # use "log_pval" to plot log p-values
+      transpose = T
+    )
+  )
+)
+
+p[["reproductive_info"]]
+imap(
+  p,
+  ~ {
+    vars <- Clin_info[[.y]]
+
+    h <- max(3, length(vars) * 0.35) # height per variable
+    w <- max(6, max(nchar(vars)) * 0.18) # width per character
+
+    ggsave(
+      filename = paste0("../Results/Covar_cor/", "Fact_", .y, ".png"),
+      plot = .x,
+      width = w,
+      height = h,
+      dpi = 300
+    )
+  }
+)
+```
+
+```{r scatter-plot}
+#| fig-width: 13
+#| fig-height: 10
+
+plot_data_scatter(
+  MOFAmodel,
+  view = "Transcriptomics",
+  factor = 1,
+  features = 20,
+  color_by = "RVVC_AS"
+) +
+  scale_fill_manual(values = pal$RVVC_AS, na.value = "transparent")
+
+plot_data_scatter(
+  MOFAmodel,
+  view = "Metabolomics",
+  factor = 1,
+  features = 20,
+  color_by = "RVVC_AS"
+) +
+  scale_fill_manual(values = pal$Clin_gr, na.value = "transparent")
+```
+
+## 10. Dimensionality reduction
+
+```{r umap}
+set.seed(42)
+MOFAmodel <- run_umap(MOFAmodel)
+
+plot_dimred(
+  MOFAmodel,
+  method = "UMAP",
+  color_by = "RVVC_AS",
+  dot_size = 5
+) +
+  scale_fill_manual(values = pal$Clin_gr, na.value = "transparent")
+
+#MOFAmodel <- run_umap(MOFAmodel, factors = c("Factor4"))
+```
+
+# Summary
+
+This file is a fully executable Quarto document with named chunks for reproducibility, caching, and debugging.
+
+
+
+```{r}
+#| eval: false
+
+# code not currently in use, but could be usefull
+
+## ---- overview-plot ------------------------------------------------
+# shows the same as overview plot, but coloured by metadata and not by omic type
+mofa_df %>%
+  left_join(select(meta, sample, RVVC_AS), by = "sample") %>%
+  select(sample, view, RVVC_AS) %>%
+  unique() %>%
+  mutate(RVVC_AS = factor(.$RVVC_AS)) %>%
+  mutate(sample = fct_reorder(sample, as.integer(RVVC_AS), .na_rm = FALSE)) %>%
+
+  ggplot(., aes(x = sample, y = view, fill = RVVC_AS)) +
+  geom_tile() + #scale_fill_manual(values = c(missing = "grey", colors)) +
+  theme_nothing() +
+  theme(
+    axis.text.y = element_text(size = 12),
+    legend.position = "top",
+    plot.margin = unit(c(1, 1, 0, 1), "cm")
+  ) +
+  scale_fill_manual(values = pal$Clin_bin, na.value = "transparent")
+
+
+## ---- mofa-variance-barplot ------------------------------------------------
+plot_variance_explained(
+  MOFAmodel,
+  plot_total = FALSE
+)
+
+df_long <- get_factors(
+  MOFAmodel,
+  factors = "all",
+  groups = "all",
+  as.data.frame = TRUE
+) %>%
+  left_join(., samples_metadata(MOFAmodel)[, -1], by = "sample") %>%
+  as_tibble()
+
+df_wide <- pivot_wider(df_long, names_from = "factor", values_from = "value")
+plot_fact.fun <- function(X, Y, gr_val, pal) {
+  p <- ggplot(
+    df_wide,
+    aes(x = .data[[X]], y = .data[[Y]], colour = .data[[gr_val]])
+  ) +
+    geom_point(size = 2, alpha = 0.9) +
+    labs(x = X, y = Y) +
+    theme_classic() +
+    scale_fill_manual(
+      values = pal[1:length(unique(na.omit(df_wide[[gr_val]])))],
+      aesthetics = c("colour", "fill")
+    ) +
+    theme(
+      axis.text = element_text(size = rel(0.8), color = "#373844"),
+      axis.title = element_text(size = rel(1.1), color = "#373844"),
+      axis.line = element_line(color = "#373844", linewidth = 0.5),
+      axis.ticks = element_line(color = "#373844", linewidth = 0.5)
+    )
+  return(p)
+}
+map(vars, ~ plot_fact.fun("Factor1", "Factor3", .x, pal3))
+plot_fact.fun("Factor1", "Factor3", "group_2", pal3)
+
+## other version:
+# df_long <- get_factors(
+#   MOFAmodel,
+#   factors = "all",
+#   groups = "all",
+#   as.data.frame = TRUE
+# ) %>%
+#   left_join(., samples_metadata(MOFAobject)[, -2], by = "sample") %>%
+#   as_tibble()
+
+# df_wide <- pivot_wider(
+#   df_long,
+#   names_from = "factor",
+#   values_from = "value"
+# ) %>%
+#   mutate(lab = ifelse(.$RVVC_AS == "RVVC_AS", .$sample, NA))
+
+# plot_fact.fun <- function(X, Y, gr_val, pal) {
+#   p <- ggplot(
+#     df_wide,
+#     aes(x = .data[[X]], y = .data[[Y]], colour = .data[[gr_val]])
+#   ) +
+#     geom_point(size = 2, alpha = 0.9) +
+#     geom_text(
+#       aes(label = .data[["lab"]]),
+#       size = 3,
+#       hjust = 0,
+#       nudge_x = 0.07,
+#       color = "gray51"
+#     ) +
+#     labs(x = X, y = Y) +
+#     theme_classic() +
+#     scale_fill_manual(
+#       na.value = "white",
+#       values = pal[1:length(unique(na.omit(df_wide[[gr_val]])))],
+#       aesthetics = c("colour", "fill")
+#     ) +
+#     theme(
+#       axis.text = element_text(size = rel(0.8), color = "#373844"),
+#       axis.title = element_text(size = rel(1.1), color = "#373844"),
+#       axis.line = element_line(color = "#373844", linewidth = 0.5),
+#       axis.ticks = element_line(color = "#373844", linewidth = 0.5)
+#     )
+#   return(p)
+# }
+# vars <- c(
+#   "RVVC_AS",
+#   "Clin_gr",
+#   "group_2",
+#   "hyphae",
+#   "group_cross",
+#   "Clinical_score_(0-5)"
+# ) %>%
+#   set_names()
+
+# # colour pallets
+# blue <- brewer.pal(6, name = "Blues") %>% c(., "gray")
+# Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray")
+# pal <- c("#f26386", "#fd814e", "#a4d984", "#fbbc52") # "#f588af", "#fd814e"
+# pal2 <- c("#2266ac", "#91c5de")
+
+# #Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray")
+# pal1 <- c("#ffa998", '#FB5273', "#902267") %>% c(., "gray") #
+# pal3 <- c("#9e8dec", "#cc93cf", "#a5c97b", "#de9548") #"#abcb4b" "#63d3b4" "#902267",
+
+# plot_fact.fun("Factor1", "Factor3", "group_2", pal3)
+
+# p <- map(vars, ~ plot_fact.fun("Factor2", "Factor1", .x, pal3))
+# p[["RVVC_AS"]] +
+#   stat_ellipse(
+#     aes(color = RVVC_AS, fill = RVVC_AS),
+#     geom = "polygon",
+#     alpha = 0.25
+#   )
+
+## ---- weights-by-view ------------------------------------------------
+# test the
+weights_TR <- get_weights(MOFAmodel, views = "Transcriptomics")$Transcriptomics
+head(sort(abs(weights_TR[, 1]), decreasing = TRUE))
+
+TRX <- t(X$species$TR)
+mt_genes <- grepl("^MT", rownames(TRX))
+mt_fraction <- colSums(TRX[mt_genes, ]) / colSums(TRX)
+
+cor(
+  get_factors(MOFAmodel)$group1[, 1],
+  mt_fraction,
+  use = "complete.obs"
+)
+```
