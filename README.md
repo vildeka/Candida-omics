@@ -45,9 +45,9 @@ This repository will bring together multiple omics layers generated from the sam
 
 
 ### Supervised sPLS-DA Analysis (DIABLO)
-1. [sPLS-DA-Metagenome](https://vildeka.github.io/Candida-omics/src/Feature_selection_Metagenomics)
-2. [sPLS-DA-Metabolome](https://vildeka.github.io/Candida-omics/src/Feature_Selection_Metabolomics)
-3. [sPLS-DA-Transcriptome](https://vildeka.github.io/Candida-omics/src/Feature_selection_Transcriptomics) <br />
+1. [sPLS-DA-Metagenome](https://vildeka.github.io/Candida-omics/Feature_selection_Metagenomics)
+2. [sPLS-DA-Metabolome](https://vildeka.github.io/Candida-omics/Feature_Selection_Metabolomics)
+3. [sPLS-DA-Transcriptome](https://vildeka.github.io/Candida-omics/Feature_selection_Transcriptomics) <br />
 1. [01_DIABLO-Prepp](https://vildeka.github.io/Candida-omics/01_DIABLO_prepp)
 2. [02_DIABLO-models](https://vildeka.github.io/Candida-omics/02_DIABLO_models)
 
