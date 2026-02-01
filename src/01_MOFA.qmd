@@ -31,13 +31,16 @@ This report presents a **structured MOFA2 analysis** integrating transcriptomics
 
 1. Load required libraries and define plotting palettes
 2. Load omics data and sample metadata
-3. Harmonise sample identifiers and metadata
-4. Prepare omics matrices for MOFA (features × samples)
-5. Construct and configure the MOFA model
-6. Train the MOFA model
-7. Perform model diagnostics and quality checks
-8. Annotate latent factors using metadata
-9. Generate publication‑ready figures
+3. Format MOFA input
+4. Select samples for inclusion
+5. Unsupervised UMAPs
+6. Configure and run the MOFA model
+7. Load trained MOFA model
+8. Perform model diagnostics and quality checks
+9. Covariates- Factor correlation
+10. Annotate latent factors using group information
+11. Feature-level figures
+12. Unified UMAP (all views)
 
 ---
 
@@ -173,169 +176,7 @@ MB_matrix <- read.csv(MB_path, row.names = 1)
 
 ```
 
-## 3. Metadata harmonisation
-
-#### explore metadata
-```{r expand-some-meta_data_columns}
-#| code-fold: true
-#| eval: false
-
-# old code now moved to Modify_clinical_columns.qmd
-
-# colnames(meta_data)
-anti_depress <- "citalopram|esticipalopran|livotril|sertralin|escitalopram|voxtra|sertrone|sertralun"
-allergy <- "xolair|vantoline|turbohaler|cetrizin|desloratadin|antihistamin|atarax|loratadin|dymista|asthma"
-ADHD <- "concerta|metylphenidate"
-acne <- "isotreonin|dienorette|acne cream"
-gastric_reflux <- "omeprazol"
-anticoagulant <- "markumar"
-high_blood_pressure <- "metoprolol"
-hypotyreos <- "levaxin"
-insomnia <- "propavan"
-endometriosis <- "endovelle"
-other <- "alvedon|birth control pills slinda"
-
-# ---------------
-# medication use
-# ---------------
-# specify which types of medication (create new columns that are factors for the specific categories of medications used)
-
-meta_data_ <- meta_data %>%
-  # select(svamp_ID, `Medications (which?)`) %>%
-  mutate(
-    present = "1", #ifelse(is.na(`Medications (which?)`), NA, "1"),
-    name = `Medications (which?)`,
-    name = case_when(
-      str_detect(name, anti_depress) ~ "antidepressants (y/n)",
-      str_detect(name, allergy) ~ "allergy (y/n)",
-      str_detect(name, ADHD) ~ "ADHD (y/n)",
-      str_detect(name, acne) ~ "acne (y/n)",
-      str_detect(name, endometriosis) ~ "endometriosis (y/n)",
-      str_detect(name, gastric_reflux) ~ "gastric_reflux (y/n)",
-      str_detect(name, high_blood_pressure) ~ "high_blood_pressure (y/n)",
-      str_detect(name, insomnia) ~ "insomnia (y/n)",
-      str_detect(name, anticoagulant) ~ "anticoagulant (y/n)",
-      str_detect(name, hypotyreos) ~ "hypotyreos (y/n)",
-      str_detect(name, other) ~ NA,
-
-      TRUE ~ name
-    ),
-    .after = "Medications (which?)"
-  ) %>%
-  pivot_wider(
-    names_from = name,
-    values_from = present,
-    values_fill = "0"
-  ) %>%
-  select(-"NA")
-
-# ------------------------------
-# Typees of contraceptives
-# ------------------------------
-# contraceptive use, seperate into different factor columns per type
-
-meta_data_ <- meta_data_ %>%
-  # select(svamp_ID, `Current contraceptive (which?)`) %>%
-  mutate(
-    name = `Current contraceptive (which?)`,
-    name = case_when(
-      str_detect(name, "birth control pills") ~ "hormonal (y/n)",
-      str_detect(name, "mirena|kyleena|jaydess|IUD") ~ "hormonal (y/n)",
-      str_detect(name, "implant|vaginal ring") ~ "hormonal (y/n)",
-      str_detect(name, "condom|copper") ~ "non hormonal (y/n)",
-      str_detect(name, "endovelle") ~ "none (y/n)",
-      str_detect(name, "none") ~ "none (y/n)",
-      str_detect(name, "/") ~ NA,
-      TRUE ~ name
-    ),
-    .after = "Current contraceptive (which?)"
-  ) %>%
-  mutate(present = ifelse(is.na(`Current contraceptive (which?)`), NA, "1")) %>%
-  pivot_wider(
-    names_from = name,
-    values_from = present,
-    values_fill = "0"
-  ) %>%
-  mutate(across(
-    any_of(c("hormonal", "non hormonal", "none")),
-    ~ if_else(is.na(`Current contraceptive (which?)`), NA, .x)
-  )) %>%
-  select(-"NA")
-
-
-# --------------------------
-# Problems with intercourse
-# -------------------------
-old_name <- "Symptom score (0-5) - ibland har de svarat olika skriftligt i frågeformuläret och muntligt vid inklusiion, då har jag valt den högsta scoren"
-meta_data_ <- meta_data_ %>%
-  rename(`Symptom score (0-5)` = all_of(old_name)) %>%
-  mutate(
-    "gyn_problem_intercourse (weekly/monthly/less/no)" = case_when(
-      `How often can you have intercourse without gynecological problems? (several times a week, y/n)` ==
-        "1" ~ "0",
-      `How often can you have intercourse without gynecological problems? (a couple times a month, y/n)` ==
-        "1" ~ "1",
-      `How often can you have intercourse without gynecological problems? (less often, y/n)` ==
-        "1" ~ "2",
-      `How often can you have intercourse without gynecological problems? (never, y/n)` ==
-        "1" ~ "3",
-      TRUE ~ NA_character_
-    ),
-    .after = "Cervical dysplasia (y/n)"
-  )
-
-# colnames(meta_data_)
-```
-
-```{r metadata_harmonisation}
-#| eval: false
-
-# old code now moved to Modify_clinical_columns.qmd
-
-trx_mapping <- trx_mapping %>%
-  select(sample = svamp_ID, batch = BEA_ID) %>%
-  mutate(batch = str_replace(batch, "_.+", ""))
-
-metab_clus <- metab_clus %>%
-  select(sample = 1, ends_with("_louvain")) %>%
-  mutate_at(., 2:ncol(.), factor)
-
-meta_data_ <- meta_data_ %>%
-  select(
-    sample = "svamp_ID",
-    6:17, # Symptom score + Clinical score
-    20:25, # Wet smear
-    29:36, # Fungal culture
-    38:42, # general confounders
-    c(47, 49:51), # relationship
-    c(54, 56, 59, 98:106), # drugs
-    c(61, 64:67, 69), # diesases
-    c(90, 71:73, 99:106, 75:78, 81, 83, 84, 87:88) # reproductive info
-  )
-
-BV <- c("S84_BL", "S38", "S44", "S60", "S20")
-
-meta <- meta_groups %>%
-  dplyr::rename(sample = "svamp_ID") %>%
-  left_join(CST_info, by = "sample") %>%
-  left_join(metab_clus, by = "sample") %>%
-  #left_join(trx_mapping, by = "sample") %>%
-  mutate(
-    Lacto = ifelse(
-      CST == "I",
-      "Lacto_c",
-      ifelse(CST == "III", "Lacto_i", "other")
-    )
-  ) %>%
-
-  left_join(meta_data_, by = "sample") %>%
-  rename_with(~ gsub(" ", "_", .x)) %>%
-  mutate("Clinical_score_(0-5)" = as.character(`Clinical_score_(0-5)`))
-
-
-```
-
-## 4. Prepare MOFA input
+## 3. Prepare MOFA input
 
 ### 4.1 Assemble omics views
 MOFA describes each omic dataset as a "view". One of the possible inputs to mofa is a list of matrixes for each view.
@@ -378,7 +219,7 @@ mofa_df <- imap_dfr(views, ~ omics_to_long(.x, .y))
 ```
 
 ### 4.3 Sample criteria df
-The tibble called m shows what samples excist across views for each study participant
+The tibble called `m` shows what samples excist across views for each study participant
 ```{r identify-samples-overlap}
 # select samples to include
 m <- mofa_df %>%
@@ -414,7 +255,7 @@ mofa_df <- mofa_df %>%
 meta_ <- meta %>% filter(sample %in% m$sample[m$at_least_two & m$all_BL])
 ```
 
-## 5. Sample heatmap overview
+## 4. Sample heatmap overview
 With our samples selected we can now plot a overviw heatmap showing all our included samples, which omic views they are represented in and how they are distributed by some of our groups of intrest
 ```{r heatmap-function}
 #| code-fold: true
@@ -612,8 +453,7 @@ H <- heatmap_prepp(
 ```
 
 ```{r save-plot}
-#| include: false
-#| eval: true
+#| code-fold: true
 #| output: true
 #| fig-width: 8.5
 #| fig-height: 11
@@ -638,14 +478,6 @@ H_g <- draw(
   padding = unit(c(3, 9, -2, 3), "mm") # outer padding
 ) # b,l,t,r
 
-H_g
-
-################
-# COMBINE PLOTS #
-################
-# dev.new(width=3.5, height=7.48, noRStudioGD = TRUE)
-#(B <- plot_grid(H_epi, H_sub, labels = c('B'), ncol = 1, rel_heights = c(1, .7)))
-
 ################
 # SAVE RESULTS #
 ################
@@ -661,8 +493,14 @@ png(
 H_g
 #draw(H)
 dev.off()
+
 ```
 
+
+## 5. Unsupervised UMAPs 
+We plot unsupervised umaps coloured by different groups of intrest in order to see how they cluster across views. 
+
+!NB should think about doing with and without HVGs only
 
 ```{r filter-samples-for-UMAP}
 # filter samples from views for UMAP ploting
@@ -672,11 +510,6 @@ m_ <- m %>%
 v <- views %>%
   imap(., ~ .x[, m_$sample[m_[[.y]]]])
 ```
-
-## Step 5: Unsupervised UMAPs 
-We plot unsupervised umaps coloured by different groups of intrest in order to see how they cluster across views. 
-
-!NB should think about doing with and without HVGs only
 
 This first code is taken from Paulos analysis of the metabolomics data.
 It gives more control over the knn clustering by perfoming it in a seperate step and then supplying the knn to the umap function.
@@ -911,8 +744,9 @@ plots
 ```
 
 
-## 5. MOFA model construction
+## 6. MOFA model construction
 A MOFA object is created and configured with default data and training options. The number of latent factors is set a priori and can be tuned depending on variance explained.
+
 ### Data options
 
 <details>
@@ -1077,7 +911,7 @@ MOFAmodel <- run_mofa(
 )
 ```
 
-## 6. Load trained MOFA model
+## 7. Load trained MOFA model
 We load the model with the highest elbo score
 ```{r load_model}
 #| eval: true
@@ -1113,7 +947,7 @@ samples_metadata(MOFAmodel) <- samples_metadata(MOFAmodel)[, c(
 "../Results/MOFA/MOFA_all_154_samples_strain.hdf5"
 ```
 
-## 7. Model diagnostics
+## 8. Model diagnostics
 
 ```{r view-distribution}
 #| fig-width: 8
@@ -1173,8 +1007,6 @@ A good sanity check is to verify that the Factors are largely uncorrelated. In M
 plot_factor_cor(MOFAmodel)
 ```
 
-## 8. Factor visualisation
-When running MOFA the first time, the internal quality control warned that at least one of the factors was strongly corelated with the total number of expressed features in one of the views. This is typically a result of batch effect. As seen in the plot bellow Factor one perfectly seperates the two batches of the transcriptomics data. Therfore I went back and performed batch correction in the `QC_Transcriptomics.qmd` script.
 ```{r factors_by_batch}
 MOFAbatch <- load_model(
   "../Results/MOFA/MOFA_noBatch_strain.hdf5"
@@ -1188,6 +1020,8 @@ plot_factors(
   color_by = "batch"
 )
 ```
+
+When running MOFA the first time, the internal quality control warned that at least one of the factors was strongly corelated with the total number of expressed features in one of the views. This is typically a result of batch effect. As seen in the plot above Factor 1 perfectly seperates the two batches of the transcriptomics data. Thus batch correction was performe in the upstream `QC_Transcriptomics.qmd` script.
 
 ```{r factors_by_clinical}
 #| fig-width: 10
@@ -1218,6 +1052,70 @@ plot_factors(
 
 ```
 
+## 9. Covariate-Factor correlation
+
+```{r covariates-factor-correlation}
+#| warning: false
+#| message: false
+
+#samples_metadata(MOFAmodel) <- samples_metadata(MOFAobject)
+covariates <- samples_metadata(MOFAmodel)[,
+  27:ncol(samples_metadata(MOFAmodel))
+] %>%
+  colnames()
+groups <- samples_metadata(MOFAmodel)[, 1:25] %>% colnames()
+
+# remove columns
+# covariates <- covariates[!(grepl("Follow_up", covariates))]
+Clin_info <- list(
+  Clin_score = covariates[1:12], # Clinical score + Symptom score
+  Wet_smear = covariates[13:18], # Wet smear
+  Fungal_culture = covariates[19:26], # Fungal culture
+  confounders = covariates[27:31], # general confounders
+  relationship = covariates[32:35], # relationship
+  drugs = covariates[36:52], # drugs
+  reproductive_info = covariates[53:68] # reproductive info
+)
+
+# reproductive info
+# quartz(width = 6, height = 6, dpi = 100)
+
+p <- imap(
+  Clin_info,
+  ~ wrap_elements(
+    panel = ~ correlate_factors_with_covariates(
+      MOFAmodel,
+      covariates = .x,
+      mar = c(-2, 0, 0, 0),
+      plot = "r", # use "log_pval" to plot log p-values
+      transpose = T
+    )
+  )
+)
+par(mar = c(0, 0, 0, 0), bg = NA)
+# p[["reproductive_info"]]
+p
+
+imap(
+  p,
+  ~ {
+    vars <- Clin_info[[.y]]
+
+    h <- max(3, length(vars) * 0.35) # height per variable
+    w <- max(6, max(nchar(vars)) * 0.18) # width per character
+
+    ggsave(
+      filename = paste0("../Results/Covar_cor/", "Fact_", .y, ".png"),
+      plot = .x,
+      width = w,
+      height = h,
+      dpi = 300
+    )
+  }
+)
+```
+
+## 10. Factor visualisation
 
 ```{r Factor-grid-dist-plot}
 #| fig-width: 7
@@ -1326,7 +1224,7 @@ map(
 )
 ```
 
-## 9. Feature-level analysis
+## 11. Feature-level analysis
 
 ```{r top_weights}
 #| fig-cap: "Top metagenomic features driving Factor 2"
@@ -1437,58 +1335,6 @@ p <- p +
 p
 ```
 
-## Factor covariate correlation
-
-```{r covariates-factor-correlation}
-#samples_metadata(MOFAmodel) <- samples_metadata(MOFAobject)
-covariates <- samples_metadata(MOFAmodel) %>% colnames()
-
-# remove columns
-# covariates <- covariates[!(grepl("Follow_up", covariates))]
-Clin_info <- list(
-  Clin_score = covariates[22:34], # Clinical score + Symptom score
-  Wet_smear = covariates[35:40], # Wet smear
-  Fungal_culture = covariates[41:48], # Fungal culture
-  confounders = covariates[53:57], # general confounders
-  relationship = covariates[58:61], # relationship
-  drugs = covariates[62:78], # drugs
-  reproductive_info = covariates[80:94] # reproductive info
-)
-
-# reproductive info
-# quartz(width = 6, height = 6, dpi = 100)
-
-p <- imap(
-  Clin_info,
-  ~ wrap_elements(
-    panel = ~ correlate_factors_with_covariates(
-      MOFAmodel,
-      covariates = .x,
-      plot = "r", # use "log_pval" to plot log p-values
-      transpose = T
-    )
-  )
-)
-
-p[["reproductive_info"]]
-imap(
-  p,
-  ~ {
-    vars <- Clin_info[[.y]]
-
-    h <- max(3, length(vars) * 0.35) # height per variable
-    w <- max(6, max(nchar(vars)) * 0.18) # width per character
-
-    ggsave(
-      filename = paste0("../Results/Covar_cor/", "Fact_", .y, ".png"),
-      plot = .x,
-      width = w,
-      height = h,
-      dpi = 300
-    )
-  }
-)
-```
 
 ```{r scatter-plot}
 #| fig-width: 13
@@ -1513,7 +1359,7 @@ plot_data_scatter(
   scale_fill_manual(values = pal$Clin_gr, na.value = "transparent")
 ```
 
-## 10. Dimensionality reduction
+## 12. Dimensionality reduction
 
 ```{r umap}
 set.seed(42)
