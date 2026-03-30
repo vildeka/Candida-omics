@@ -31,30 +31,109 @@ library(scales)
 select <- dplyr::select
 map <- purrr::map
 
-pal <- c("#ffa998", "#f588af", "#902267") # #e05e85
-feat <- c("#bdd3c5", "#48919d", "#3d4b6eff") # "#1f2e55", "#c6cdf7"
-pal <- c("#d18ac8", "#3db8ac", "#8861d2", "#6095d7", "#755fa3", "#c44999")
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
+
 feat <- c("#e39ddaff", "#6dded3ff", "#a68cd5ff") #,"#6095d7","#755fa3","#c44999")
 
+```
+
+```{r pallets}
+#| code-fold: true
+
 pal <- list(
-  Clin = c("#a5c97b", "#cc93cf", "#de9548", "#63d3b4", "#9e8dec", "#902267"), #"#abcb4b"
-  Clin_bin = c("#ffa998", "#f588af", "#902267"),
-  RVVC_AS = c("#ffa998", '#FB5273', "#902267")
+  CST = c(
+    "I" = "#148F77",
+    "II" = "#6d9f06",
+    "III" = "#A3E4D7",
+    "IV-B" = "#E794C1",
+    "IV-C" = "#b5cb8c",
+    "V" = "#43BA8F"
+  ),
+  subCST = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#91c5de"
+  ),
+  RVVC = c("#EAEAEA", "#fd814e"),
+  BV = c("#EAEAEA", "#fd814e"),
+  NAC = c("#EAEAEA", "#fd814e"),
+  ST = c("#EAEAEA", "#fd814e"),
+  missing_page = c("#EAEAEA", "#fd814e"),
+  Clin = c("#a5c97b", "#cc93cf", "#de9548", "#63d3b4", "#9e8dec", "#902267"),
+  Clin_gr = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_AS = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_pos = c(
+    "#A6CEE3",
+    "#1F78B4",
+    #"#EAEAEA",
+    #"gray",
+    "#e490c4ff",
+    "#c12d88ff"
+  ), # "#FB9A99", "#E31A1C", "#B2DF8A", "#609c5bff", "#FDBF6F", "#FF7F00",, "#CAB2D6", "#6a3d9a" "#e490c4ff", "#c12d88ff"
+  trx_louvain_7 = c(
+    "#de9548",
+    "#cc93cf",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4",
+    '#FB5273'
+  ),
+  metab_louvain = c(
+    "#cc93cf",
+    "#a5c97b",
+    "#de9548",
+    "#902267",
+    "#9e8dec",
+    "#63d3b4"
+    #'#FB5273'
+  ),
+  microb_louvain = c(
+    "#cc93cf",
+    "#de9548",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4",
+    '#FB5273'
+  ),
+  fun_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273'
+    #"#984EA3"
+    #"#B3CDE3"
+  ),
+  integ_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#984EA3"
+    #"#B3CDE3"
+  ),
+  "Wet_smear:_clue_cells_(y/n)" = c("#2266ac", "#91c5de"),
+  hyphae = c("#f26386", "#fd814e", "#a4d984", "#fbbc52"),
+  pos = c("#91c5de", "#2266ac"),
+  "Clinical_score_(0-5)" = brewer.pal(6, name = "Reds")
 )
 ```
 
 ```{r X-and-Y}
 X <- readRDS("../Results/MixOmic/X_object.RDS")
 Y <- readRDS("../Results/MixOmic/Y_object.RDS")
-```
-
-```{r remove-NA-samples}
-# ---- 5. Subset each matrix to baseline only and overlapping samples ----
-na_RVVC <- !(is.na(Y$RVVC_AS))
-
-X$species <- X$species %>% map(~ .x[na_RVVC, , drop = FALSE])
-X$strain <- X$strain %>% map(~ .x[na_RVVC, , drop = FALSE])
-Y <- Y %>% map(~ .x[na_RVVC])
 ```
 
 **Variables to change**
@@ -102,21 +181,25 @@ test.KeepX <- list(
   "test.High" = list(
     TR = c(seq(300, 500, 50)),
     MG = c(50, 25, 5),
+    FU = c(50, 25, 5),
     MB = c(50, 25, 5)
   ),
   "test.Median" = list(
     TR = c(seq(100, 250, 50)),
     MG = c(50, 25, 5),
+    FU = c(50, 25, 5),
     MB = c(50, 25, 5)
   ),
   "test.Low" = list(
     TR = c(seq(10, 50, 10)),
     MG = c(50, 25, 5),
+    FU = c(50, 25, 5),
     MB = c(50, 25, 5)
   ),
   "test.High" = list(
     TR = c(seq(300, 500, 50)),
     MG = c(50, 25, 5),
+    FU = c(50, 25, 5),
     MB = c(50, 25, 5)
   )
 )
@@ -145,7 +228,7 @@ This structure allows each row to be passed programmatically to `run_diablo_tuni
 
 tune <- tibble(
   "Taxa" = c("strain", "strain", "strain", "strain", "strain"),
-  "gr" = c("RVVC_AS", "RVVC_AS", "Clin_bin", "Clin_bin", "RVVC_AS"),
+  "gr" = c("RVVC_pos", "RVVC_pos", "Clin_gr", "pos", "RVVC_pos"),
   "design" = c("full", "null", "full", "null", "null"),
   "KeepX" = c("test.High", "test.Median", "test.Low", "test.High", "test.Low")
 ) %>%
@@ -198,7 +281,7 @@ run_diablo_tuning <- function(
   Model,
   overwrite = FALSE
 ) {
-  out_file <- paste0("tune_batch_model_", Model, ".rds")
+  out_file <- paste0("tune_batch_model_FU", Model, ".rds")
 
   # ---- skip if already completed ----
   if (file.exists(out_file) && !overwrite) {
@@ -287,26 +370,14 @@ res <- pmap(
 cat(unlist(res), sep = '\n')
 ```
 
+:::
+
 ## Run Models 
 
-:::
+
 
 ```{r Models}
 #| code-fold: true
-
-# names <- map_chr(seq_along(tune$Model), ~ paste0("Model", .x))
-
-# diablo_mod <- pmap(
-#   tune,
-#   ~ block.splsda(
-#     X = X[[..1]],
-#     Y = Y[[..2]],
-#     design = ..3,
-#     keepX = diablo_fits[[..5]]$choice.keepX,
-#     ncomp = 2
-#   )
-# ) %>%
-#   set_names(., names)
 
 tune <- tune %>%
   mutate(
@@ -325,8 +396,9 @@ tune <- tune %>%
   mutate(nr_feat = pmap(., ~ diablo_fits[[..5]]$choice.keepX)) %>%
   mutate(diablo.mod = set_names(.$diablo.mod, paste0("Model ", .$Model)))
 
-saveRDS(tune, "../Results/MixOmic/Diablo_object.RDS")
+saveRDS(tune, "../Results/MixOmic/Diablo_object_FU.RDS")
 # tune <- readRDS("../Results/MixOmic/Diablo_object.RDS")
+# tune <- readRDS("../Results/MixOmic/Diablo_object_FU.RDS")
 ```
 
 ## Visualizations
@@ -490,11 +562,136 @@ res <- pmap(
         '  var.names = FALSE,',
         '  style = "graphics",',
         '  legend = TRUE,',
-        '  pch = c(16, 17, 15),',
-        '  cex = c(2, 2, 2),',
-        '  col = c("#e39ddaff", "#6dded3ff", "#a68cd5ff"),',
+        '  pch = c(16, 17, 15, 18),',
+        '  cex = c(2, 2, 2, 2),',
+        '  col = c("#E69F00", "#CD3B8E", "#D55E00", "#CC79A7"),',
         '  title = "DIABLO comp 1 - 2")',
         '```',
+        ''
+      ),
+      envir = environment(),
+      quiet = TRUE
+    )
+  }
+)
+
+cat(unlist(res), sep = '\n')
+```
+
+:::
+
+
+::: {.panel-tabset}
+
+```{r loadings-plot-comp1, echo=FALSE, results='asis'}
+res <- pmap(
+  #list(diablo_mod, tune$Taxa, tune$design, pal_n, seq_along(diablo_mod)),
+  tune,
+  function(Taxa, gr, design, KeepX, nr_feat, Model, diablo.mod) {
+    img_path <- paste0("../Results/MixOmic/loadings_comp1_", Model, ".png")
+    knitr::knit_child(
+      text = c(
+        paste0('## Model ', Model),
+        paste0('###### Taxa: ', Taxa, ', Design: ', design), #'\n'
+        paste0(
+          '###### KeepX:  TR: ',
+          as.character(nr_feat[["TR"]]),
+          ' MG: ',
+          as.character(nr_feat[["MG"]]),
+          ' MB: ',
+          as.character(nr_feat[["MB"]])
+        ),
+        '```{r}',
+        '#| fig-width: 10',
+        '#| fig-height: 6',
+        '#| fig-cap: ""',
+        '',
+        paste0(
+          'png("',
+          img_path,
+          '", width = 10, height = 6, res = 300, units = "in")'
+        ),
+        'par(mar = c(5.1, 4.1, 4.1, 6.1))  # b,l,t,r',
+        'try(plotLoadings(diablo.mod, comp = 1, ndisplay = 20, size.name = 0.7,',
+        '    size.title = 0.9, contrib = "max", method = "median", legend.color = pal[[gr]]),',
+        '    silent = TRUE)',
+        #'plotLoadings(diablo.mod, comp = 2, contrib = "max", method = "median")',
+        '',
+        'dev.off()',
+        '```',
+        '',
+        paste0('![](', img_path, ')'),
+        ''
+      ),
+      envir = environment(),
+      quiet = TRUE
+    )
+  }
+)
+
+cat(unlist(res), sep = '\n')
+```
+
+:::
+
+::: {.panel-tabset}
+
+```{r}
+#| eval: false
+
+quartz(width = 15, height = 6, dpi = 70)
+plotLoadings(
+  tune$diablo.mod[[1]],
+  comp = 2,
+  #layout = c(3, 1),
+  ndisplay = 20,
+  size.name = 0.7,
+  size.title = 0.5,
+  contrib = "max",
+  method = "median",
+  legend.color = pal[["RVVC_pos"]]
+) +
+  theme(plot.margin = unit(c(1, 1, 1, 7), "in")) #t, r, b, l
+```
+
+```{r loadings-plot-comp2, echo=FALSE, results='asis'}
+
+res <- pmap(
+  #list(diablo_mod, tune$Taxa, tune$design, pal_n, seq_along(diablo_mod)),
+  tune,
+  function(Taxa, gr, design, KeepX, nr_feat, Model, diablo.mod) {
+    img_path <- paste0("../Results/MixOmic/loadings_comp2_", Model, ".png")
+    knitr::knit_child(
+      text = c(
+        paste0('## Model ', Model),
+        paste0('###### Taxa: ', Taxa, ', Design: ', design), #'\n'
+        paste0(
+          '###### KeepX:  TR: ',
+          as.character(nr_feat[["TR"]]),
+          ' MG: ',
+          as.character(nr_feat[["MG"]]),
+          ' MB: ',
+          as.character(nr_feat[["MB"]])
+        ),
+        '```{r}',
+        '#| fig-width: 10',
+        '#| fig-height: 6',
+        '#| fig-cap: ""',
+        '',
+        paste0(
+          'png("',
+          img_path,
+          '", width = 14, height = 6, res = 300, units = "in")'
+        ),
+        'try(plotLoadings(diablo.mod, comp = 2, ndisplay = 20, size.name = 0.7,',
+        '    size.title = 1, contrib = "max", method = "median", legend.color = pal[[gr]]), ',
+        '    silent = TRUE)',
+        #'plotLoadings(diablo.mod, comp = 2, contrib = "max", method = "median")',
+        '',
+        'dev.off()',
+        '```',
+        '',
+        paste0('![](', img_path, ')'),
         ''
       ),
       envir = environment(),
@@ -545,7 +742,7 @@ res <- pmap(
         '    color.Y = pal[[gr]],',
         '    size.legend = 1.5,',
         '    margins = c(10, 4),',
-        '    color.blocks = c("#e39ddaff", "#6dded3ff", "#a68cd5ff"),',
+        '    color.blocks = c("#E69F00", "#CD3B8E", "#D55E00", "#CC79A7"),',
         '    legend.position = "bottomleft",',
         '    title = "Clustered heatmap of integrated data")',
         '',
@@ -569,6 +766,7 @@ cat(unlist(res), sep = '\n')
 ::: {.panel-tabset}
 
 ```{r circosPlot, echo=FALSE, results='asis'}
+#| eval: false
 
 res <- pmap(
   #list(diablo_mod, tune$Taxa, tune$design, pal_n, seq_along(diablo_mod)),
@@ -605,7 +803,7 @@ res <- pmap(
         '    size.variables = 0.5,',
         '    size.labels = 1,',
         '    color.Y = pal[[gr]],',
-        '    color.blocks = c("#e39ddaff", "#6dded3ff", "#a68cd5ff"),',
+        '    color.blocks = c("#E69F00", "#CD3B8E", "#D55E00", "#CC79A7"),',
         '    color.cor = c("#F67E4B", "#6EA6CD"))',
         '',
         'dev.off()',
@@ -651,12 +849,14 @@ sim_to_edges <- function(sim_matrix, threshold = NULL) {
       type_from = case_when(
         from %in% TR ~ "TR",
         from %in% MB ~ "MB",
-        from %in% MG ~ "MG"
+        from %in% MG ~ "MG",
+        from %in% FU ~ "FU"
       ),
       type_to = case_when(
         to %in% TR ~ "TR",
         to %in% MB ~ "MB",
-        to %in% MG ~ "MG"
+        to %in% MG ~ "MG",
+        from %in% FU ~ "FU"
       )
     ) %>%
     filter(from != to) %>%
@@ -680,7 +880,8 @@ sim_to_edges <- function(sim_matrix, threshold = NULL) {
       block = case_when(
         name %in% TR ~ "TR",
         name %in% MG ~ "MG",
-        name %in% MB ~ "MB"
+        name %in% MB ~ "MB",
+        from %in% FU ~ "FU"
       )
     )
 
