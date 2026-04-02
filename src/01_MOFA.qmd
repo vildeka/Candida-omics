@@ -77,6 +77,14 @@ map <- purrr::map
 rename <- dplyr::rename
 
 pal <- list(
+  CST = c(
+    "I" = "#148F77",
+    "II" = "#6d9f06",
+    "III" = "#A3E4D7",
+    "IV-B" = "#E794C1",
+    "IV-C" = "#b5cb8c",
+    "V" = "#43BA8F"
+  ),
   subCST = c(
     "#a5c97b",
     "#cc93cf",
@@ -91,7 +99,7 @@ pal <- list(
   BV = c("#EAEAEA", "#fd814e"),
   NAC = c("#EAEAEA", "#fd814e"),
   ST = c("#EAEAEA", "#fd814e"),
-  missing_RVVC = c("#EAEAEA", "#fd814e"),
+  missing_page = c("#EAEAEA", "#fd814e"),
   Clin = c("#a5c97b", "#cc93cf", "#de9548", "#63d3b4", "#9e8dec", "#902267"),
   Clin_gr = c("#ffa998", '#FB5273', "#902267"),
   RVVC_AS = c("#ffa998", '#FB5273', "#902267"),
@@ -108,11 +116,29 @@ pal <- list(
     "#cc93cf",
     "#a5c97b",
     "#9e8dec",
-    "#63d3b4",
     "#902267",
+    "#63d3b4",
     '#FB5273'
   ),
   metab_louvain = c(
+    "#cc93cf",
+    "#a5c97b",
+    "#de9548",
+    "#902267",
+    "#9e8dec",
+    "#63d3b4"
+    #'#FB5273'
+  ),
+  microb_louvain = c(
+    "#cc93cf",
+    "#de9548",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4",
+    '#FB5273'
+  ),
+  fun_louvain = c(
     "#a5c97b",
     "#cc93cf",
     "#de9548",
@@ -120,14 +146,8 @@ pal <- list(
     "#9e8dec",
     "#902267",
     '#FB5273'
-  ),
-  microb_louvain = c(
-    "#de9548",
-    "#cc93cf",
-    "#a5c97b",
-    "#9e8dec",
-    "#902267",
-    "#63d3b4"
+    #"#984EA3"
+    #"#B3CDE3"
   ),
   integ_louvain = c(
     "#a5c97b",
@@ -143,9 +163,15 @@ pal <- list(
   "Wet_smear:_clue_cells_(y/n)" = c("#2266ac", "#91c5de"),
   hyphae = c("#f26386", "#fd814e", "#a4d984", "#fbbc52"),
   pos = c("#91c5de", "#2266ac"),
+  fct1_clus = c("#33A02C", "#B2DF8A", "#FF7F00", "#FDBF6F"), #"#FDBF6F" "#FF7F00", "#CAB2D6", "#6A3D9A"
   "Clinical_score_(0-5)" = brewer.pal(6, name = "Reds")
 )
-gr_names <- c("Control", "RVVC", "RVVC_H")
+# default ggplot2 pallet:
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+gg_color_hue(4)
 ```
 
 ## 2. Data loading
@@ -160,19 +186,21 @@ comb_meta_path <- "../Results/Combined_gr_meta_data.csv"
 # meta data
 Clin_data <- read_xlsx(Clin_path, sheet = "Metadata", na = "na")
 meta <- read_csv(comb_meta_path) %>%
-  rename(sample = "svamp_ID") %>%
-  mutate(across(2:25, ~ factor(.x)))
+  #rename(sample = "svamp_ID") %>%
+  mutate(across(2:27, ~ factor(.x)))
 top_hvg <- read_csv("../Results/Tissue_QC/HVG.csv")
 
 
 TRX_path <- "../Results/MixOmic/Transcriptomics_batch_filt.csv"
 MG_path <- "../Results/MixOmic/Metageonome_vagswab_CLR_transformed.RDS"
 MB_path <- "../Results/MixOmic/Metabolom_Normalized.csv"
+FM_path <- "../Tidy_data/Metagenomics/Functional_annotation_CLR_filtered.RDS"
 
 # expression data
 TRX_batch <- read.csv(TRX_path, row.names = 1)
 MG_matrix <- readRDS(MG_path)
 MB_matrix <- read.csv(MB_path, row.names = 1)
+FM_matrix <- readRDS(FM_path)
 
 ```
 
@@ -195,8 +223,9 @@ TRX_HVG <- TRX_batch[top_hvg$gene[1:5000], ]
 
 views <- list(
   Transcriptomics = as.matrix(TRX_HVG),
+  Metabolomics = as.matrix(MB_matrix),
   Metagenomics = unclass(t(MG_matrix)),
-  Metabolomics = as.matrix(MB_matrix)
+  Functional = unclass(FM_matrix$path_lvl)
 )
 ```
 
@@ -234,9 +263,10 @@ m <- mofa_df %>%
 
 m <- m %>%
   mutate(
-    n_views = rowSums(across(-sample)),
+    n_views = rowSums(across(-c("sample", "Functional"))),
     at_least_two = n_views >= 2,
     all_BL = !(grepl("_3M|_1W|_6M", .$sample)),
+    all_BL = ifelse(grepl("S84_BL", sample), FALSE, all_BL),
     matched = n_views == 3
   )
 
@@ -257,6 +287,8 @@ meta_ <- meta %>% filter(sample %in% m$sample[m$at_least_two & m$all_BL])
 
 ## 4. Sample heatmap overview
 With our samples selected we can now plot a overviw heatmap showing all our included samples, which omic views they are represented in and how they are distributed by some of our groups of intrest
+NB! S10 and S15 was excluded from metagenome analysis due to low total counts before and after taxa filtering respectivelyl
+Thats why I have given them a lighter pink colour
 ```{r heatmap-function}
 #| code-fold: true
 
@@ -298,8 +330,12 @@ heatmap_prepp <- function(keep_s, vars, arrange_by = "Clinical_score_(0-5)") {
     arrange(
       desc(.data[[arrange_by]])
     ) %>%
-    select(1:4) %>%
-    mutate(across(where(is.logical), as.integer)) %>%
+    select(1:5) %>%
+    mutate(across(where(is.logical), as.double)) %>%
+    mutate(
+      Metagenomics = ifelse(grepl("S10|S15", sample), 0.5, Metagenomics),
+      Functional = ifelse(grepl("S10|S15", sample), 0.5, Functional)
+    ) %>%
     column_to_rownames("sample") # convert sample ID to rownames
 
   # Convert to numeric matrix for ComplexHeatmap
@@ -312,11 +348,13 @@ heatmap_prepp <- function(keep_s, vars, arrange_by = "Clinical_score_(0-5)") {
   ### 2. Prepare annotation dataframe (metadata)
   ### ------------------------------------------------------------
 
-  annot_col <- meta %>%
-    filter(sample %in% rownames(df_bin)) %>% # keep same samples as heatmap matrix
-    arrange(match(sample, rownames(df_bin))) %>%
+  annot_col <<- meta %>%
     select(sample, any_of(vars)) %>% # select annotation variables
     mutate(across(all_of(vars), ~ factor(.x))) %>%
+    # {. ->> all_annot} %>%
+    filter(sample %in% rownames(df_bin)) %>% # keep same samples as heatmap matrix
+    arrange(match(sample, rownames(df_bin))) %>%
+
     #mutate(across(1:length(vars) + 1, ~ factor(.x))) %>% # ensure annotations are factors
     column_to_rownames("sample") # convert sample ID to rownames
 
@@ -410,8 +448,8 @@ heatmap_prepp <- function(keep_s, vars, arrange_by = "Clinical_score_(0-5)") {
 ### Color function for the symptom heatmap
 ### ------------------------------------------------------------
 col_fun <- colorRamp2(
-  c(0, 0.6, 1),
-  c("white", "white", "#e05e85")
+  c(0, 0.5, 1),
+  c("white", "#EFAEC2", "#e05e85") #"#e05e8584"
 )
 
 ### ------------------------------------------------------------
@@ -426,13 +464,16 @@ vars <- c(
   "RVVC_pos",
   "BV",
   "NAC",
-  "missing_RVVC",
+  "missing_page",
   "ST"
 )
-
+c("S84_BL|S38|S44|S60|S20|K30")
+c("S84_BL", "S38", "S44", "S60", "S20", "S30")
 keep_s <- rep(TRUE, nrow(m)) # 152 every samples incl. follow up
 keep_s <- m$all_BL # 91 samples
 keep_s <- m$matched # 70 samples
+
+keep_s <- grepl("S84_BL|S38|S44|S60|S20|S30|S16|S14", m$sample) # exluded
 keep_s <- m$at_least_two & m$all_BL # 89 samples
 
 H <- heatmap_prepp(keep_s, vars)
@@ -483,12 +524,12 @@ H_g <- draw(
 ################
 # quartz(width = 6, height = 6, dpi = 150)
 png(
-  file = paste0("../Results/Sample_HT/BL_89.png"),
+  file = paste0("../Results/Sample_HT/Excluded_samples.png"),
   units = "in",
   res = 600,
   #width = 8.5, height = 10 # Epi
   width = 8.5,
-  height = 11 # 11 # my_h # 17 (all samples)
+  height = 4 # 11 # my_h # 17 (all samples)
 )
 H_g
 #draw(H)
@@ -559,6 +600,128 @@ UMAP_df <- v %>%
   map(., ~ left_join(., annot_col, by = c("ID" = "sample")))
 ```
 
+```{r Paulos-groups}
+#| eval: false
+# attempt at getting the same groups as Paulo, but failed, think I need his list with the group result
+Paulo_clus <- c(
+  Metab = "/Users/vilkal/Downloads/resulsts_metabolomics/metab_knn.rds",
+  Microbe = "/Users/vilkal/Downloads/resulsts_metabolomics/microb_knn.rds",
+  Integ = "/Users/vilkal/Downloads/resulsts_metabolomics/integ_knn.rds"
+)
+
+res <- c(0.8, 0.6, 1.3)
+
+set.seed(42)
+clus <- map(Paulo_clus, ~ readRDS(.x)) %>%
+  # graph:
+  map(
+    .,
+    ~ igraph::graph_from_data_frame(
+      data.frame(
+        from = rep(1:nrow(.x[["idx"]]), ncol(.x[["idx"]])),
+        to = c(.x[["idx"]]),
+        weight = c(.x[["dist"]])
+      ),
+      directed = F
+    )
+  ) %>%
+  # clustering:
+  map2(., res, ~ igraph::cluster_louvain(.x, resolution = .y, weights = NA))
+
+map(clus, ~ table(.x$membership))
+# it does not create the same groups as the seed are ignored as fare as I can see
+```
+
+```{r get-Louvain-clusters}
+#| warning: false
+#| message: false
+cluster_louvain_list <- function(
+  mat_list,
+  k = 10,
+  n_pcs = 10,
+  resolution = 0.6,
+  seed = 42
+) {
+  require(RcppHNSW)
+  require(Matrix)
+  require(igraph)
+  require(tibble)
+
+  cluster_results <- purrr::imap(
+    mat_list,
+    ~ {
+      mg <- .x # matrix
+      nm <- .y # name of the matrix
+      idx <- which(names(mat_list) == nm)
+
+      # PCA
+      PC <- prcomp(t(mg), scale. = TRUE, center = TRUE)
+      x <- PC$x[, seq_len(min(n_pcs, ncol(PC$x)))]
+
+      # KNN
+      knn <- RcppHNSW::hnsw_knn(as.matrix(x), k = k, distance = "cosine")
+
+      # Graph
+      g <- igraph::graph_from_data_frame(
+        data.frame(
+          from = rep(1:nrow(knn$idx), ncol(knn$idx)),
+          to = c(knn$idx),
+          weight = c(knn$dist)
+        ),
+        directed = FALSE
+      )
+
+      # Clustering
+      set.seed(seed)
+      cl <- igraph::cluster_louvain(
+        g,
+        resolution = resolution[idx],
+        weights = NA
+      )
+      #cl <- igraph::cluster_leiden(g, resolution = resolution)
+
+      out <- cl$membership
+      names(out) <- rownames(x)
+
+      out
+    }
+  )
+
+  # Combine into one table
+  cluster_df <- cluster_results %>%
+    imap(
+      ~ tibble(
+        sample = names(.x),
+        cluster = .x,
+        matrix = .y
+      )
+    ) %>%
+    bind_rows() %>%
+    pivot_wider(
+      names_from = matrix,
+      values_from = cluster
+    ) %>%
+    mutate(across(-sample, as.factor))
+
+  return(cluster_df)
+}
+# res <- c(1.3, 1.2, 1.3, 0.9)
+res <- c(1.3, 1.2, 1.3, 1)
+n <- c("trx_louvain_7", "metab_louvain", "microb_louvain", "fun_louvain")
+result <- v %>%
+  set_names(., n) %>%
+  cluster_louvain_list(mat_list = ., resolution = res)
+
+map(set_names(n), ~ table(result[[.x]]))
+# head(result)
+
+meta <- meta %>%
+  select(-any_of(n)) %>%
+  left_join(., result, by = "sample") %>%
+  select(1:15, any_of(n), everything())
+# write_csv(meta, "../Results/Combined_gr_meta_data.csv")
+```
+
 ```{r UMAP-function}
 #| code-fold: true
 
@@ -571,10 +734,10 @@ UMAP_fun <- function(
   title = ""
 ) {
   if (is.null(shape_gr)) {
-    point <- geom_point(size = 3, alpha = 1, shape = 21)
+    point <- geom_point(size = 2, alpha = 1, shape = 21)
   } else {
     point <- geom_point(
-      size = 3,
+      size = 2,
       alpha = 1,
       aes(shape = if (!is.null(shape_gr)) .data[[shape_gr]] else NULL)
     )
@@ -599,7 +762,7 @@ UMAP_fun <- function(
       name = ""
       #aesthetics = c("colour", "fill")
     ) +
-    guides(fill = "none") +
+    guides(fill = "none", nrow = 2, byrow = TRUE) +
     scale_colour_manual(
       values = pal[[group_var]],
       na.value = "gray",
@@ -694,21 +857,23 @@ umap_dfs <- v %>%
   ) %>%
   map(., ~ left_join(., annot_col, by = c("ID" = "sample")))
 
+
 meta_clus <- colnames(annot_col)
 color_vars <- c(
   "pos",
   "trx_louvain_7",
   "metab_louvain",
   "microb_louvain",
-  "integ_louvain",
+  "fun_louvain",
+  #"integ_louvain",
   "Clinical_score_(0-5)",
   "RVVC_pos",
-  "RVVC_AS"
+  "CST"
 ) %>%
   set_names(.)
 
 #### Combine and save plots ####
-make_umap_panel <- function(var, umap_dfs, outdir = "../Results/UMAP/") {
+make_umap_panel <- function(var, umap_dfs, outdir = "../Results/UMAP2/") {
   # create plots for each dataset
   p_list <- imap(
     umap_dfs,
@@ -717,7 +882,7 @@ make_umap_panel <- function(var, umap_dfs, outdir = "../Results/UMAP/") {
 
   # combine with shared legend
   p_combined <- patchwork::wrap_plots(p_list) +
-    patchwork::plot_layout(guides = "collect") &
+    patchwork::plot_layout(nrow = 1, guides = "collect") &
     theme(legend.position = "right")
 
   # safe filename
@@ -737,6 +902,18 @@ make_umap_panel <- function(var, umap_dfs, outdir = "../Results/UMAP/") {
 
 plots <- map(color_vars, ~ make_umap_panel(.x, umap_dfs))
 plots
+
+# quartz(width = 6, height = 6, dpi = 60)
+p_ <- patchwork::wrap_plots(plots, ncol = 1) +
+  patchwork::plot_layout(guides = "collect", axis_titles = "collect") &
+  theme(legend.position = "right", title = element_blank())
+
+ggsave(
+  paste0("../Results/Factor_plots2/UMAP_louvain", ".pdf"),
+  p_,
+  width = 15,
+  height = 25
+)
 # use shapes:
 # UMAP_fun(umap_dfs$Metabolomics, "trx_louvain_7", "txt_clin", shape_gr = "pos", shape = c(21, 24))
 # no shapes
@@ -856,7 +1033,7 @@ run_mofa_with_seed <- function(seed) {
 
   MOFAmodel <- run_mofa(
     MOFAobject,
-    outfile = paste0("../Results/MOFA/MOFA_allBL_seed_", seed, ".hdf5"),
+    outfile = paste0("../Results/MOFA/MOFA_allBL_noS84_seed_", seed, ".hdf5"),
     use_basilisk = TRUE
   )
 
@@ -871,7 +1048,7 @@ run_mofa_with_seed <- function(seed) {
 
 # existing training code stays the same
 elbo_table <- map_dfr(seeds, ~ run_mofa_with_seed(.x))
-write_csv(elbo_table, "../Results/MOFA/elbo_table.csv")
+write_csv(elbo_table, "../Results/MOFA/elbo_table_noS84.csv")
 best_seed <- elbo_table$seed[which.max(elbo_table$elbo)]
 
 
@@ -921,20 +1098,15 @@ We load the model with the highest elbo score
 #| tbl-colwidths: [60,40]
 
 elbo_table <- read_csv("../Results/MOFA/elbo_table.csv")
+elbo_table <- read_csv("../Results/MOFA/elbo_table_noS84.csv")
 knitr::kable(elbo_table, )
 best_seed <- elbo_table$seed[which.max(abs(elbo_table$elbo))]
 
 MOFAmodel <- load_model(
   #"../Results/MOFA/MOFA_matched_seed_50.hdf5"
-  paste0("../Results/MOFA/MOFA_allBL_seed_", best_seed, ".hdf5")
+  # "../Results/MOFA/MOFA_allBL_seed_"
+  paste0("../Results/MOFA/MOFA_allBL_noS84_seed_", best_seed, ".hdf5")
 )
-
-# existing training code stays the same
-samples_metadata(MOFAmodel) <- samples_metadata(MOFAmodel)[, c(
-  "sample",
-  "group"
-)] %>%
-  left_join(meta, by = "sample")
 
 # batch corrected tr, ~17 000 genes, strain lvl, no followup samples
 "../Results/MOFA/MOFA_matched_noM3_strain.hdf5"
@@ -945,6 +1117,28 @@ samples_metadata(MOFAmodel) <- samples_metadata(MOFAmodel)[, c(
 
 # same as above + all 154 samples
 "../Results/MOFA/MOFA_all_154_samples_strain.hdf5"
+```
+
+```{r get-factor-clusters}
+
+# Extract factors, and join metadata
+clusters <- list()
+clusters$fct1_clus <- cluster_samples(MOFAmodel, k = 4, factors = 1)$cluster
+clusters$fct2_clus <- cluster_samples(MOFAmodel, k = 4, factors = 2)$cluster
+clusters$fct4_clus <- cluster_samples(MOFAmodel, k = 4, factors = 4)$cluster
+
+clust <- bind_cols(sample = names(clusters[[1]]), clusters)
+
+meta <- meta %>%
+  dplyr::left_join(., clust, by = "sample") %>%
+  dplyr::mutate(across(all_of(names(clusters)), ~ factor(.x)))
+
+# add meta data to model
+samples_metadata(MOFAmodel) <- samples_metadata(MOFAmodel)[, c(
+  "sample",
+  "group"
+)] %>%
+  left_join(meta, by = c("sample"))
 ```
 
 ## 8. Model diagnostics
@@ -960,11 +1154,17 @@ ggdensity(mofa_df, x = "value", fill = "gray70") +
 
 We first assess the overall quality of the model by inspecting variance explained and factor correlations.
 ```{r model-overview}
-#| fig-width: 8
-#| fig-height: 2
+#| fig-width: 6
+#| fig-height: 3
 
 # inspect the model:
-plot_data_overview(MOFAmodel)
+ovw <- plot_data_overview(MOFAmodel) +
+  theme(plot.margin = unit(c(1, 0, 1, 1), "cm")) + #  #EC645A, #CD3B8E, #994E95
+  scale_fill_manual(
+    values = c("#CC79A7", "#D55E00", "#CD3B8E", "gray", "#E69F00"),
+    na.value = "gray"
+  )
+ovw
 MOFAmodel
 
 ```
@@ -973,31 +1173,85 @@ MOFAmodel
 #| warning: false
 #| message: false
 #| fig-width: 9.5
-#| fig-height: 2.7
+#| fig-height: 3
 
 p1 <- plot_variance_explained(MOFAmodel, plot_total = TRUE)[[2]]
-p2 <- plot_variance_explained(MOFAmodel, factors = 1:10) #+
+p2 <- plot_variance_explained(MOFAmodel, factors = 1:10)
 
 #+
 #theme(axis.text.x = element_text(angle = 45, hjust = 0.8, vjust = 0.9))
 # plot_grid(plotlist = list(p1, p2), ncol = 2)
 
-p <- plot_data_overview(MOFAmodel) +
-  theme(plot.margin = unit(c(1, 0, 1, 1), "cm"))
+p1$layers[[1]]$aes_params$fill <- "gray" # remove fixed fill
+p1$layers[[1]]$aes_params$colour <- "#717272" # remove fixed fill
+
 p1 <- p1 +
   coord_flip() +
-  theme_nothing() +
-  theme(plot.margin = unit(c(1, 0.1, 1, 0), "cm"))
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank(),
+    plot.margin = unit(c(0, 0.1, 0, -0.5), "cm")
+  )
 p2 <- p2 +
   coord_flip() +
-  theme(axis.text.y = element_blank(), legend.position = "none") +
-  theme(plot.margin = unit(c(1, 0.5, 1, 0), "cm")) +
-  scale_y_discrete(labels = 1:10)
+  theme(
+    legend.position = c(0.5, 1.09), # 👈 just above panel, tight
+    legend.direction = "horizontal",
+    legend.text = element_text(size = 6),
+    legend.title = element_text(size = 6),
+    legend.text.position = "top",
+    legend.margin = margin(0, 0, -0, 0), # moves the legend box
+    legend.box.margin = margin(-0, 0, -0, -0)
+  ) + # moves the legend) +
+  guides(fill = guide_colorbar(title = "", barwidth = 12, barheight = 0.3)) +
+  theme(axis.text.y = element_blank()) +
+  theme(plot.margin = unit(c(0, 0.5, 0, 0), "cm")) +
+  scale_y_discrete(labels = 1:10) +
+  scale_fill_gradientn(
+    colors = c("gray97", "darkblue"),
+    labels = scales::label_number(suffix = "%") # 👈 THIS is the key
+  )
 
-# quartz(width = 9.5, height = 2.7)
-plot_grid(plotlist = list(p, p2, p1), ncol = 3, align = c("h"))
+# quartz(width = 9.5, height = 3)
+plot_grid(plotlist = list(ovw, p2, p1), nrow = 1, align = c("h"))
 
 # p$layers[[1]]$aes_params$alpha
+```
+
+```{r}
+
+ve_df <- get_variance_explained(MOFAmodel)$r2_per_factor$single_group %>%
+  as.data.frame() %>%
+  rownames_to_column("Factor") %>%
+  pivot_longer(
+    -Factor,
+    names_to = "view",
+    values_to = "variance_explained"
+  ) %>%
+  mutate(Factor = factor(.$Factor, levels = paste0("Factor", 1:15)))
+
+d <- ve_df %>%
+  filter(grepl("^Factor1$", .$Factor)) %>%
+  #filter(grepl("^Factor[1-9]$", .$Factor)) %>%
+  summarize(sum = sum(variance_explained), .by = c("Factor", "view")) %>%
+  filter(sum >= 2)
+
+ggplot(ve_df, aes(x = Factor, y = variance_explained, fill = view)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(
+    values = c("#CC79A7", "#D55E00", "#CF1C90", "#E69F00"),
+    na.value = "gray"
+  ) +
+  labs(
+    x = "Factor",
+    y = "Variance explained (%)",
+    fill = "view"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
 ```
 
 #### Correlation between factors
@@ -1036,6 +1290,16 @@ p <- plot_factors(
 
 p
 
+p <- plot_factor(
+  MOFAmodel,
+  factors = "all",
+  color_by = "RVVC_pos",
+  group_by = "RVVC_pos",
+) +
+  scale_fill_manual(values = pal$RVVC_pos, na.value = "white")
+
+p
+
 plot_factors(
   MOFAmodel,
   factors = c(1, 3),
@@ -1047,9 +1311,202 @@ plot_factors(
     alpha = 0.25
   ) +
   scale_fill_manual(values = pal$Clin_gr, na.value = "white")
+```
 
-# quartz(width = 6, height = 6, dpi = 150)
+```{r}
+library(ggExtra)
+p <- get_factors(MOFAmodel, factors = c(1, 3), as.data.frame = TRUE) %>%
+  as_tibble() %>%
+  select(-group) %>%
+  pivot_wider(names_from = "factor") %>%
+  left_join(., samples_metadata(MOFAmodel), by = "sample") %>%
+  ggplot(., aes(x = Factor1, y = Factor3, colour = RVVC_pos)) +
+  geom_point(size = 2, alpha = 0.8, show.legend = F) +
+  scale_colour_manual(values = pal$RVVC_pos) +
+  coord_cartesian(expand = T) +
+  # scale_x_continuous(expand = expansion(mult = 0.02)) +
+  # scale_y_continuous(expand = expansion(mult = 0.02)) +
+  theme_classic()
 
+ggMarginal(
+  p,
+  type = "density",
+  groupColour = TRUE,
+  trim = FALSE,
+  groupFill = TRUE
+) +
+  stat_ellipse(
+    #aes(color = RVVC_AS, fill = RVVC_AS),
+    geom = "polygon",
+    alpha = 0.25
+  )
+
+
+plot_mofa_factor_vs_variable <- function(
+  df,
+  factor = 1,
+  y_var,
+  palette = pal[[y_var]],
+  jitter_width = 0.1,
+  add_marginal = TRUE,
+  marginal_type = "density"
+) {
+  # jitter object
+  jitterer <- position_jitter(width = jitter_width, seed = 123)
+
+  # Main ggplot
+  p <- ggplot(
+    df,
+    aes(
+      x = .data[[paste0("Factor", factor)]],
+      y = .data[[y_var]],
+      colour = .data[[y_var]]
+    )
+  ) +
+    geom_point(
+      size = 1,
+      alpha = 0.8,
+      show.legend = FALSE,
+      position = jitterer
+    ) +
+    geom_point(
+      aes(colour = NULL),
+      pch = 21,
+      size = 1,
+      alpha = 0.4,
+      show.legend = FALSE,
+      colour = "gray",
+      position = jitterer
+    ) +
+    geom_boxplot(
+      aes(colour = .data[[y_var]]),
+      fill = "transparent",
+      show.legend = FALSE,
+      outlier.shape = NA,
+      median.color = "black"
+    ) +
+    coord_cartesian(expand = TRUE) +
+    theme_minimal() +
+    theme(
+      axis.text.y.left = element_blank(),
+      axis.title.y.left = element_blank()
+    )
+
+  # Add palette if provided
+  if (!is.null(palette)) {
+    p <- p + scale_colour_manual(values = palette)
+  }
+
+  # Add marginal plot if requested
+  if (add_marginal) {
+    p <- ggMarginal(
+      p,
+      type = marginal_type,
+      groupColour = TRUE,
+      groupFill = TRUE,
+      trim = FALSE,
+      margins = "x",
+      size = 1
+    )
+  }
+
+  return(p)
+}
+
+# Extract factors, reshape wide, join metadata
+df <- get_factors(MOFAmodel, factors = c(1), as.data.frame = TRUE) %>%
+  as_tibble() %>%
+  select(-group) %>%
+  #mutate(fct1_clus = as.character(clusters$cluster[.$sample])) %>%
+  pivot_wider(names_from = "factor") %>%
+  left_join(samples_metadata(MOFAmodel), by = "sample")
+
+
+```
+
+```{r}
+#| fig.width: 3
+#| fig.height: 2
+# quartz(width = 3, height = 2, dpi = 150)
+plot_mofa_factor_vs_variable(
+  df,
+  y_var = "RVVC_pos"
+)
+```
+
+```{r}
+#| fig.width: 3
+#| fig.height: 2
+plot_mofa_factor_vs_variable(
+  df,
+  y_var = "Clinical_score_(0-5)"
+)
+```
+
+```{r}
+#| fig.width: 3
+#| fig.height: 2
+plot_mofa_factor_vs_variable(
+  df,
+  y_var = "fct1_clus"
+)
+```
+
+```{r}
+#| fig.width: 3
+#| fig.height: 2
+plot_mofa_factor_vs_variable(
+  df,
+  palette = NULL,
+  y_var = "fct4_clus"
+)
+```
+
+```{r save-factor-violin-all-gr}
+color_vars <- c(
+  "pos",
+  "trx_louvain_7",
+  "metab_louvain",
+  "microb_louvain",
+  #"fun_louvain",
+  "integ_louvain",
+  "Clinical_score_(0-5)",
+  "RVVC_pos",
+  "RVVC_AS"
+) %>%
+  set_names(.)
+
+# fct_var <- map(
+#   vars,
+#   ~ plot_factors(
+#     MOFAmodel,
+#     factors = "all",
+#     color_by = .x,
+#   ) +
+#     scale_fill_manual(values = pal[[.x]], na.value = "white")
+# )
+
+plots <- imap(
+  color_vars,
+  ~ plot_factor(
+    MOFAmodel,
+    factor = "all",
+    #group_by = .x,
+    color_by = .x,
+    #dot_size = 4,
+    #dodge = TRUE,
+    stroke = 0.4,
+    #add_violin = TRUE,
+    #add_boxplot = FALSE
+  ) +
+    ylim(-4, 5) +
+    scale_fill_manual(values = pal[[.x]], na.value = "white")
+)
+
+ggsave(
+  paste0("../Results/Factor_plots2/Factor_all_gr", ".pdf"),
+  gridExtra::marrangeGrob(grobs = plots, ncol = 1, nrow = 1, height = 7)
+)
 ```
 
 ## 9. Covariate-Factor correlation
@@ -1060,10 +1517,10 @@ plot_factors(
 
 #samples_metadata(MOFAmodel) <- samples_metadata(MOFAobject)
 covariates <- samples_metadata(MOFAmodel)[,
-  27:ncol(samples_metadata(MOFAmodel))
+  28:ncol(samples_metadata(MOFAmodel))
 ] %>%
   colnames()
-groups <- samples_metadata(MOFAmodel)[, 1:25] %>% colnames()
+groups <- samples_metadata(MOFAmodel)[, 1:23] %>% colnames()
 
 # remove columns
 # covariates <- covariates[!(grepl("Follow_up", covariates))]
@@ -1071,10 +1528,11 @@ Clin_info <- list(
   Clin_score = covariates[1:12], # Clinical score + Symptom score
   Wet_smear = covariates[13:18], # Wet smear
   Fungal_culture = covariates[19:26], # Fungal culture
-  confounders = covariates[27:31], # general confounders
-  relationship = covariates[32:35], # relationship
-  drugs = covariates[36:52], # drugs
-  reproductive_info = covariates[53:68] # reproductive info
+  confounders = covariates[32:37], # general confounders
+  relationship = covariates[38:42], # relationship
+  drugs = covariates[43:60], # drugs
+  reproductive_info = covariates[c(61:70, 74:76)], # reproductive info
+  louvain = groups[13:20] # reproductive info
 )
 
 # reproductive info
@@ -1086,7 +1544,7 @@ p <- imap(
     panel = ~ correlate_factors_with_covariates(
       MOFAmodel,
       covariates = .x,
-      mar = c(-2, 0, 0, 0),
+      win.asp = 1, # max(6, max(nchar(.x)) * 0.18) / max(3, length(.x) * 0.35) ,
       plot = "r", # use "log_pval" to plot log p-values
       transpose = T
     )
@@ -1123,24 +1581,73 @@ imap(
 
 p <- plot_factors(
   MOFAmodel,
-  factors = c(1, 2, 3),
+  factors = c(1, 2, 3, 4),
   dot_size = 1,
-  color_by = "RVVC_AS"
+  #stroke = 1,
+  color_by = "RVVC_pos"
 ) +
   scale_fill_manual(
-    values = pal$RVVC_AS,
+    values = pal$RVVC_pos,
     na.value = "transparent",
     aesthetics = c("colour", "fill")
   )
+# quartz(width = 6, height = 6, dpi = 150)
+
 p
 
 ggsave(
-  filename = paste0("../Results/Factor_plots/", "Factor_1-3_grid", "", ".png"),
+  filename = paste0("../Results/Factor_plots2/", "Factor_1-3_grid", "", ".png"),
   plot = p,
   width = 7,
   height = 5,
   dpi = 300
 )
+
+### Plot and save many versions:
+my_fun <- function(factors, color_var) {
+  p <<- do.call(
+    plot_factors,
+    list(
+      object = MOFAmodel, # ← correct argument name
+      factors = factors,
+      dot_size = 1,
+      shape_by = NULL,
+      color_by = color_var
+    )
+  )
+
+  p +
+    scale_fill_manual(
+      values = pal[[color_var]],
+      na.value = "transparent",
+      aesthetics = c("colour", "fill")
+    )
+}
+
+factor_list <- list(c(1, 2, 7), c(1, 8, 9), c(1, 3, 10), c(4, 5, 6), c(4, 5, 6))
+color_vars <- c(
+  "trx_louvain_7",
+  "metab_louvain",
+  "microb_louvain",
+  "metab_louvain",
+  "RVVC_AS"
+)
+
+plots <- purrr::map2(factor_list, color_vars, my_fun)
+# quartz(width = 6, height = 6, dpi = 150)
+# plots[[3]]
+
+pdf(
+  file = paste0("../Results/Factor_plots2/Grid_Factors", ".pdf"),
+  #units = "in",
+  #res = 600,
+  #width = 8.5, height = 10 # Epi
+  width = 6,
+  height = 4 # 11 # my_h # 17 (all samples)
+)
+plots
+#draw(H)
+dev.off()
 ```
 
 ```{r Factor-violin-plots}
@@ -1165,7 +1672,7 @@ plot_factor_set <- function(
       MOFAmodel,
       factor = factors,
       color_by = .x,
-      dot_size = 4,
+      dot_size = 2,
       dodge = TRUE,
       stroke = 0.4,
       add_violin = TRUE,
@@ -1195,13 +1702,6 @@ plot_factor_set <- function(
 
 meta_clus <- colnames(annot_col)
 
-fctors <- c(
-  "trx_louvain_7",
-  "metab_louvain",
-  "microb_louvain",
-  "integ_louvain"
-) %>%
-  set_names()
 
 fctors <- c(
   "RVVC_AS",
@@ -1213,15 +1713,52 @@ fctors <- c(
   set_names()
 
 map(
-  c(1, 2, 3),
+  c(1, 2, 3, 4),
   ~ plot_factor_set(
     MOFAmodel = MOFAmodel,
     factors = .x,
     color_vars = fctors,
     pal = pal,
-    out_file = paste0("../Results/Factor_plots/Factor", .x, "_gr", ".png")
+    out_file = paste0("../Results/Factor_plots2/Factor", .x, "_gr", ".png")
   )
 )
+c(1, 2, 3, 4, 5, 6, 7, 8)
+c(9, 10, 11, 12, 13, 14, 15)
+
+fctors <- c(
+  "trx_louvain_7",
+  "metab_louvain",
+  "microb_louvain",
+  "fun_louvain"
+) %>%
+  set_names()
+update_geom_defaults("violin", aes(linewidth = 0))
+update_geom_defaults("boxplot", aes(linewidth = 0))
+p <- map(
+  c(1, 2, 3, 4, 5, 6, 7, 8),
+  ~ plot_factor_set(
+    MOFAmodel = MOFAmodel,
+    factors = .x,
+    color_vars = fctors,
+    pal = pal,
+    out_file = paste0("../Results/Factor_plots2/Factor", .x, "_louvain", ".png")
+  )
+)
+
+# quartz(width = 6, height = 6, dpi = 60)
+p_ <- patchwork::wrap_plots(p, ncol = 1) +
+  patchwork::plot_layout(guides = "collect", axis_titles = "collect") &
+  theme(legend.position = "none")
+
+ggsave(
+  paste0("../Results/Factor_plots2/Factor_1-8_louvain_", ".png"),
+  p_,
+  width = 8,
+  height = 10
+)
+# not working
+# ggsave(paste0("../Results/Factor_plots/Factor_4-8_gr", ".pdf"),
+#        gridExtra::marrangeGrob(grobs=p, ncol=1, nrow=1, height = 5, width=2)))
 ```
 
 ## 11. Feature-level analysis
@@ -1231,7 +1768,8 @@ map(
 #| fig-width: 10
 #| fig-height: 5
 
-views <- c("Transcriptomics", "Metabolomics", "Metagenomics")
+views <- c("Transcriptomics", "Metabolomics", "Metagenomics", "Functional")
+c <- c("#CC79A7", "#D55E00", "#CF1C90", "#E69F00")
 p1 <- map(
   views,
   ~ plot_weights(
@@ -1240,7 +1778,8 @@ p1 <- map(
     factor = 1,
     nfeatures = 10,
     text_size = 3
-  )
+  ) +
+    theme_transparent()
 )
 p2 <- map(
   views,
@@ -1249,66 +1788,255 @@ p2 <- map(
     factor = 1,
     view = .x,
     nfeatures = 10
-  )
+  ) +
+    theme_minimal()
 )
+plot_grid(plotlist = p2)
 p <- map2(p1, p2, ~ plot_grid(plotlist = list(.x, .y))) %>% set_names(., views)
+p
+```
+
+```{r modified-MOFA-heatmap-function}
+#| code-fold: true
+# Modified function: plot_data_heatmap2() with sample_order argument
+# It is identical to the original except for 13 added lines.
+plot_data_heatmap2 <- function(
+  object,
+  factor,
+  view = 1,
+  groups = "all",
+  features = 50,
+  annotation_features = NULL,
+  annotation_samples = NULL,
+  transpose = FALSE,
+  imputed = FALSE,
+  denoise = FALSE,
+  max.value = NULL,
+  min.value = NULL,
+  sample_order = NULL, # ✅ NEW ARGUMENT
+  ...
+) {
+  if (!is(object, "MOFA")) {
+    stop("'object' has to be an instance of MOFA")
+  }
+
+  stopifnot(length(factor) == 1)
+  stopifnot(length(view) == 1)
+
+  # ✅ INTERNAL HELPERS MUST USE triple-colon
+  groups <- MOFA2:::.check_and_get_groups(object, groups)
+  factor <- MOFA2:::.check_and_get_factors(object, factor)
+  view <- MOFA2:::.check_and_get_views(object, view)
+
+  # Extract model matrices
+  W <- do.call(
+    rbind,
+    get_weights(object, views = view, factors = factor, as.data.frame = FALSE)
+  )
+  Z_list <- lapply(get_factors(object)[groups], function(z) {
+    as.matrix(z[, factor])
+  })
+  Z <- do.call(rbind, Z_list)[, 1]
+  Z <- Z[!is.na(Z)]
+
+  # Choose raw, imputed, or denoised data
+  if (isTRUE(denoise)) {
+    data <- predict(object, views = view, groups = groups)[[1]]
+  } else if (isTRUE(imputed)) {
+    data <- get_imputed_data(object, view, groups)[[1]]
+  } else {
+    data <- get_data(object, views = view, groups = groups)[[1]]
+  }
+  if (is(data, "list")) {
+    data <- do.call(cbind, data)
+  }
+
+  # ----------------------
+  # FEATURE SELECTION
+  # ----------------------
+  if (is.numeric(features)) {
+    if (length(features) == 1) {
+      features <- rownames(W)[tail(order(abs(W)), n = features)]
+    } else {
+      features <- rownames(W)[order(-abs(W))[features]]
+    }
+    features <- names(W[features, ])[order(W[features, ])]
+  } else if (is.character(features)) {
+    stopifnot(all(features %in% features_names(object)[[view]]))
+  } else {
+    stop("features must be numeric or character vector")
+  }
+
+  data <- data[features, ]
+  data <- data[, names(Z), drop = FALSE]
+  data <- data[, apply(data, 2, function(x) !all(is.na(x))), drop = FALSE]
+
+  # ----------------------
+  # ✅ CUSTOM SAMPLE ORDER
+  # ----------------------
+  if (is.null(sample_order)) {
+    # default MOFA2 ordering
+    order_samples <- names(sort(Z, decreasing = TRUE))
+    order_samples <- order_samples[order_samples %in% colnames(data)]
+  } else {
+    # user‑specified ordering
+    sample_order <- sample_order[sample_order %in% colnames(data)]
+    if (!all(sample_order %in% colnames(data))) {
+      stop("sample_order contains sample names not found in data")
+    }
+    order_samples <- sample_order
+  }
+
+  data <- data[, order_samples, drop = FALSE]
+
+  # ----------------------
+  # ANNOTATION HANDLING
+  # ----------------------
+  if (!is.null(annotation_samples)) {
+    if (is.data.frame(annotation_samples)) {
+      if (any(!order_samples %in% rownames(annotation_samples))) {
+        stop("annotation_samples rownames must match sample names")
+      }
+
+      annotation_samples <- annotation_samples[order_samples, , drop = FALSE]
+    } else if (is.character(annotation_samples)) {
+      tmp <- object@samples_metadata
+      rownames(tmp) <- tmp$sample
+      tmp$sample <- NULL
+      tmp <- tmp[order_samples, , drop = FALSE]
+      annotation_samples <- tmp[, annotation_samples, drop = FALSE]
+      rownames(annotation_samples) <- order_samples
+    } else {
+      stop("annotation_samples must be a data.frame or character vector")
+    }
+
+    # logical/character must become factor
+    to_factor <- sapply(annotation_samples, function(x) {
+      is.logical(x) || is.character(x)
+    })
+    if (any(to_factor)) {
+      annotation_samples[, which(to_factor)] <-
+        lapply(annotation_samples[, which(to_factor), drop = FALSE], as.factor)
+    }
+  }
+
+  if (transpose) {
+    data <- t(data)
+    tmp_ann <- annotation_samples
+    annotation_samples <- annotation_features
+    annotation_features <- tmp_ann
+  }
+
+  # cap values
+  if (!is.null(max.value)) {
+    data[data >= max.value] <- max.value
+  }
+  if (!is.null(min.value)) {
+    data[data <= min.value] <- min.value
+  }
+
+  # ----------------------
+  # ✅ FINAL HEATMAP CALL
+  # ----------------------
+  pheatmap::pheatmap(
+    data,
+    annotation_row = annotation_features,
+    annotation_col = annotation_samples,
+    ...
+  )
+}
+
+# old alternativer version:
+# set sample order (columns)
+# NB! can not be used with denoise = TRUE!! (because it changes the Z values used to compute the denoised values used in the heatmap )
+set_sample_order <- function(MOFAmodel, factor, order) {
+  Z <- MOFAmodel@expectations$Z$single_group[, factor]
+
+  # assign artificial values based on your desired order
+  Z[order] <- seq_along(order)
+
+  MOFAmodel@expectations$Z$single_group[, factor] <- Z
+  MOFAmodel
+}
+
+# MOFAmodel2 <- set_sample_order(MOFAmodel, factor = 1, order = sample_order)
 ```
 
 ```{r transcriptomics_heatmap}
 #| fig-width: 10
 #| code-fold: true
 
-Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray")#| fig-height: 5
-pal2 <- c("#2266ac", "#91c5de")
-
 meta_headers <- colnames(samples_metadata(MOFAmodel))
 gr_df <- samples_metadata(MOFAmodel)[, c(
-  "sample",
   "pos",
-  #"Clin_gr",
-  "BV",
+  "fct1_clus",
+  "Clinical_score_(0-5)",
   "RVVC_pos",
+  "CST",
+  "BV",
   "Wet smear: clue cells (y/n)",
   "metab_louvain"
 )] %>% #"sample",
   mutate_at(., 1:ncol(.), factor)
-rownames(gr_df) <- gr_df$sample
+rownames(gr_df) <- samples_metadata(MOFAmodel)$sample
 
-ann_colors = list(
-  metab_louvain = set_names(c(pal$metab_louvain), levels(gr_df$metab_louvain)),
-  "Wet smear: clue cells (y/n)" = set_names(
-    c(pal$pos),
-    levels(gr_df$`Wet smear: clue cells (y/n)`)
-  ),
-  BV = set_names(c(pal$BV), levels(gr_df$BV)),
-  Clin_gr = set_names(c(pal$Clin_gr), levels(gr_df$Clin_gr)),
-  pos = set_names(c(pal$pos), levels(gr_df$pos)),
-  RVVC_AS = set_names(c(pal$RVVC_AS), levels(gr_df$RVVC_AS)),
-  RVVC_pos = set_names(c(pal$RVVC_pos), levels(gr_df$RVVC_pos)),
-  WS_lacto = set_names(
-    c(pal$pos),
-    levels(gr_df$`Wet smear: amount of lactobacilli (normal/decreased)`)
-  )
-)
+# determine column order when cluster_cols=F
+sample_order <- meta %>%
+  filter(sample %in% rownames(gr_df)) %>%
+  # mutate(fct1_clus = factor(.$fct1_clus, levels = c("3", "4", "1", "2"))) %>%
+  arrange(RVVC_pos) %>%
+  #arrange(RVVC_pos, `Clinical_score_(0-5)`) %>%
+  arrange(fct1_clus, desc(`Clinical_score_(0-5)`)) %>%
+  pull(sample)
 
-plot_data_heatmap(
+gr_df <- gr_df[sample_order, ]
+
+ann_colors <- map(colnames(gr_df), function(val) {
+  # Levels for this column
+  levs <- levels(gr_df[[val]])
+
+  # CASE 1: column exists in pal → use provided palette
+  if (val %in% names(pal)) {
+    colors <- pal[[val]]
+    return(set_names(colors, levs))
+  }
+  # CASE 2: column not in pal → generate paired palette
+  colors <- gg_color_hue(length(levs))
+  set_names(colors, levs)
+  # colors <- brewer.pal(length(levs), "Paired")
+  # if (length(levs) == length(colors)) {
+  #   set_names(colors, levs)
+  # } else {
+  #   set_names(colors[1:length(levs)], levs)
+  # }
+})
+# Name the list by column names
+ann_colors <- set_names(ann_colors, colnames(gr_df))
+
+# quartz(width = 6, height = 4, dpi = 150)
+plot_data_heatmap2(
   MOFAmodel,
   view = "Transcriptomics",
   factor = 1,
   features = 20,
-  annotation_samples = gr_df[, -1], #gr_df[,-1], "Clin_gr"
-  denoise = TRUE,
+  sample_order = sample_order,
+  cluster_cols = FALSE,
+  annotation_samples = gr_df[, 2:5], #gr_df[,-1], "Clin_gr"
+  denoise = FALSE,
   scale = "row",
   annotation_colors = ann_colors
 )
 
-plot_data_heatmap(
+# quartz(width = 7, height = 4, dpi = 150)
+plot_data_heatmap2(
   MOFAmodel,
   view = "Metabolomics",
-  factor = 4,
+  factor = 1,
   features = 20,
-  annotation_samples = "metab_louvain", #gr_df[,-1], "Clin_gr"
-  denoise = TRUE,
+  #sample_order = NULL,
+  cluster_cols = FALSE,
+  annotation_samples = gr_df[, c(2:5)], #gr_df[,-1], "Clin_gr"
+  denoise = F,
   scale = "row",
   annotation_colors = ann_colors
 )
@@ -1317,22 +2045,82 @@ plot_data_heatmap(
 plot_data_heatmap has an interesting argument to “beautify” the heatmap: `denoise = TRUE`. Instead of plotting the (noisy) input data, we can plot the data reconstructed by the model, where noise has been removed:
 
 ```{r divide-groups-data}
+# quartz(width = 4, height = 3, dpi = 150)
 p <- plot_factors(
   MOFAmodel,
   factors = c(1, 2),
   color_by = "Clinical_score_(0-5)",
   shape_by = "pos",
   dot_size = 2.5,
-
   show_missing = T
 ) +
-  scale_fill_manual(values = pal$`Clinical_score_(0-5)`, na.value = "white")
+  scale_fill_manual(values = pal[["Clinical_score_(0-5)"]], na.value = "white")
 
 p <- p +
   geom_hline(yintercept = 0, linetype = "dashed") +
   geom_vline(xintercept = (-0), linetype = "dashed")
-
 p
+
+plot_factors(
+  MOFAmodel,
+  factors = c(1, 3),
+  color_by = "Clin_gr"
+) +
+  scale_fill_manual(values = pal$Clin_gr, na.value = "white") +
+  stat_ellipse(
+    #aes(color = RVVC_AS, fill = RVVC_AS),
+    geom = "polygon",
+    alpha = 0.25
+  )
+p
+
+p <- plot_factors(
+  MOFAmodel,
+  factors = c(1, 3),
+  color_by = "trx_louvain_7",
+  shape_by = "Clin_gr",
+  dot_size = 2.5,
+  show_missing = T
+) +
+  scale_fill_manual(values = pal$trx_louvain_7, na.value = "white")
+
+p <- p +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = (-0), linetype = "dashed")
+p
+
+p <- plot_factors(
+  MOFAmodel,
+  factors = c(2, 1),
+  color_by = "CST",
+  shape_by = "Clin_gr",
+  dot_size = 2.5,
+  show_missing = T
+)
+
+p <- p +
+  scale_fill_manual(values = pal$CST, na.value = "white") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = (-0), linetype = "dashed")
+p
+
+p <- plot_factors(
+  MOFAmodel,
+  factors = c(4, 1),
+  color_by = "CST",
+  shape_by = "Clin_gr",
+  dot_size = 2.5,
+  show_missing = T
+) +
+  scale_fill_manual(values = pal$CST, na.value = "white")
+p
+# scale_fill_manual(values = pal$CST, na.value = "white") +
+# stat_ellipse(
+#   #aes(color = RVVC_pos),
+#   geom = "polygon",
+#   alpha = 0.25
+# )
+
 ```
 
 
@@ -1345,9 +2133,12 @@ plot_data_scatter(
   view = "Transcriptomics",
   factor = 1,
   features = 20,
-  color_by = "RVVC_AS"
+  color_by = "Clinical_score_(0-5)"
 ) +
-  scale_fill_manual(values = pal$RVVC_AS, na.value = "transparent")
+  scale_fill_manual(
+    values = pal$`Clinical_score_(0-5)`,
+    na.value = "transparent"
+  )
 
 plot_data_scatter(
   MOFAmodel,
@@ -1368,21 +2159,307 @@ MOFAmodel <- run_umap(MOFAmodel)
 plot_dimred(
   MOFAmodel,
   method = "UMAP",
-  color_by = "RVVC_AS",
+  color_by = "RVVC_pos",
   dot_size = 5
 ) +
-  scale_fill_manual(values = pal$Clin_gr, na.value = "transparent")
+  scale_fill_manual(values = pal$RVVC_pos, na.value = "transparent")
 
 #MOFAmodel <- run_umap(MOFAmodel, factors = c("Factor4"))
+```
+
+## Step 5: Shankey plot
+
+```{r shankey-plot}
+#| fig-width: 5.25
+#| fig-height: 5.25
+library(niceRplots)
+
+plot_meta_sankey <- function(
+  vars = c("CST", "trx_louvain_7"),
+  palette = pal1,
+  drop_na = TRUE,
+  return_pdf = TRUE,
+  pdf_name = "sankey"
+) {
+  stopifnot(length(vars) == 2)
+
+  ## Select and clean metadata
+  m <- meta %>%
+    filter(sample %in% m$sample[m$at_least_two & m$all_BL]) %>%
+    dplyr::select(dplyr::all_of(vars))
+
+  if (drop_na) {
+    #m <- tidyr::drop_na(m)
+    m <- tidyr::drop_na(m, vars[1])
+    m <- mutate(
+      m,
+      !!vars[2] := tidyr::replace_na(as.character(.data[[vars[2]]]), "NA")
+    )
+  }
+
+  ## Extract labels
+  tmp <- m[, vars, drop = FALSE]
+  tmp <- as.data.frame(tmp)
+
+  ## Ensure factors
+  tmp[[1]] <- factor(tmp[[1]])
+  tmp[[2]] <- factor(tmp[[2]])
+
+  ## Plot sankey
+  #pdf( paste0("../results/integ_louvain_sankey.pdf"),width = 1.5*3.5,height = 1.5*3.5)
+  #par(mar=c(4,4,4,4))
+  #plot_sankey(df = tmp, pal = pal1)
+  #dev.off()
+
+  plot_expr <- {
+    plot_sankey(df = tmp, pal = c(palette, "NA" = "gray"))
+  }
+
+  if (return_pdf) {
+    ## Plot sankey
+    pdf(
+      paste0("../Results/sankey/", pdf_name, ".pdf"),
+      width = 1.5 * 3.5,
+      height = 1.5 * 3.5
+    )
+    par(mar = c(4, 8, 4, 4))
+    plot_sankey(df = tmp, pal = palette)
+    dev.off()
+  }
+  #plot_sankey(df = tmp, pal = palette)
+}
+
+# NB! the plot_meta_sankey function filters samples so that only the MOFA samples are included
+# quartz(width = 6, height = 6, dpi = 150)
+v <- c("metab_louvain", "CST")
+plot_meta_sankey(v, pdf_name = "sankey_metab_CST", palette = pal[[v[1]]])
+
+v <- c("microb_louvain", "CST")
+plot_meta_sankey(v, pdf_name = "sankey_microb_CST", palette = pal[[v[1]]])
+
+v <- c("CST", "Clinical_score_(0-5)")
+plot_meta_sankey(v, pdf_name = "sankey_CST_Clin_score", palette = pal[[v[1]]])
+
+v <- c("CST", "trx_louvain_7")
+plot_meta_sankey(v, pdf_name = "sankey_CST_TRX", palette = pal[[v[1]]])
+
+v <- c("metab_louvain", "BV")
+plot_meta_sankey(v, pdf_name = "sankey_metab_BV", palette = pal[[v[1]]])
+
+
+fct <- c(
+  "trx_louvain_7",
+  "metab_louvain",
+  "microb_louvain",
+  "fun_louvain"
+) %>%
+  set_names()
+
+map(
+  fct,
+  ~ plot_meta_sankey(
+    c("RVVC_pos", .x),
+    pdf_name = paste0("RVVC_pos_", .x, "_sankey"),
+    palette = pal[["RVVC_pos"]]
+  )
+)
+
+#pdf( paste0("../results/integ_louvain_sankey.pdf"),width = 1.5*3.5,height = 1.5*3.5)
+#par(mar=c(4,4,4,4))
+#plot_sankey(df = tmp, pal = pal1)
+#dev.off()
+
+```
+
+
+```{r alluvial-plot}
+# install.packages("ggalluvial")
+library(ggalluvial)
+
+lov <- c(
+  "Transcriptomics" = "trx_louvain_7",
+  "Metabolomics" = "metab_louvain",
+  "Microbiome" = "microb_louvain",
+  "Functional" = "fun_louvain"
+)
+
+# --- 1. Prepare dataframe ---
+# Ensure factors are treated as characters (avoid NA-level problems)
+df_long <- result %>%
+  select(sample, trx_louvain_7, metab_louvain, fun_louvain, microb_louvain) %>%
+  mutate(across(-sample, as.character)) %>%
+  drop_na() %>%
+  pivot_longer(
+    cols = -sample,
+    names_to = "col",
+    values_to = "cluster"
+  ) %>%
+  mutate(
+    omic = factor(
+      col,
+      levels = lov,
+      labels = names(lov)
+    ),
+    color = mapply(
+      function(colname, clust) {
+        pal[[colname]][as.integer(clust)]
+      },
+      col,
+      cluster
+    )
+  )
+
+
+# --- 2. Build the alluvial structure ---
+l <- c(
+  "Tr_4",
+  "Tr_2",
+  "Tr_1",
+  "Tr_3",
+  "Tr_6",
+  "Tr_5",
+  "Me_5",
+  "Me_1",
+  "Me_3",
+  "Me_2",
+  "Me_6",
+  "Me_4",
+  "Mi_4",
+  "Mi_1",
+  "Mi_2",
+  "Mi_3",
+  "Mi_5",
+  "Fu_5",
+  "Fu_2",
+  "Fu_3",
+  "Fu_1",
+  "Fu_4",
+  "Fu_6"
+)
+
+df_alluv <- df_long %>%
+  mutate(alluvium = sample) %>%
+  mutate(lvl = paste0(str_extract(omic, "^\\w\\w"), "_", cluster)) %>%
+  mutate(lvl = factor(.$lvl, levels = l))
+
+# --- 3. Plot ---
+ggplot(
+  df_alluv,
+  aes(
+    x = omic,
+    stratum = lvl, #cluster,
+    alluvium = alluvium,
+    fill = color,
+    label = cluster
+  )
+) +
+  geom_flow(alpha = 0.5, color = "gray40") +
+  geom_stratum(color = "black") +
+  geom_text(stat = "stratum", color = "black", size = 3) +
+  scale_fill_identity() +
+  #scale_fill_brewer(type = "qual", palette = "Set2") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Cluster Transitions Across Omics Layers",
+    x = "Omics Layer",
+    y = "Sample Count",
+    fill = "Cluster"
+  )
+
+```
+
+### Extracting data for downstream analysis
+
+```{r get-factors-weights-or-data}
+#| eval: false
+# "factors" is a list of matrices, one matrix per group with dimensions (nsamples, nfactors)
+factors <- get_factors(MOFAmodel, factors = "all")
+lapply(factors, dim)
+# long format
+factors <- get_factors(MOFAmodel, as.data.frame = TRUE)
+head(factors, n = 3)
+
+# "weights" is a list of matrices, one matrix per view with dimensions (nfeatures, nfactors)
+weights <- get_weights(MOFAmodel, views = "all", factors = "all")
+lapply(weights, dim)
+# long format
+weights <- get_weights(MOFAmodel, as.data.frame = TRUE)
+head(weights, n = 3)
+
+# "data" is a nested list of matrices, one matrix per view and group with dimensions (nfeatures, nsamples)
+data <- get_data(MOFAmodel)
+lapply(data, function(x) lapply(x, dim))[[1]]
+# long format
+data <- get_data(MOFAmodel, as.data.frame = TRUE)
+head(data, n = 3)
+```
+
+```{r test-varince-between-groups}
+factors <- get_factors(MOFAmodel, as.data.frame = TRUE)
+factors <- factors %>%
+  as_tibble() %>%
+  select(-group) %>%
+  left_join(meta, by = "sample") %>%
+  filter(grepl("Factor1$|Factor2$|Factor3$|Factor4$", .$factor))
+
+plot_factor_violins <- function(data, group_var, comparisons) {
+  p <- ggplot(
+    data,
+    aes(x = .data[[group_var]], y = value, fill = .data[[group_var]])
+  ) +
+    geom_violin(trim = FALSE) +
+    geom_point() +
+    geom_boxplot(width = 0.1, outlier.shape = NA) +
+    facet_wrap(~factor, scales = "free_y", nrow = 1) +
+    #facet_grid(rows = vars(RVVC_pos), cols = vars(factor), scales = "free", space = "free") +
+    labs(
+      x = "Groups",
+      y = "Factor value"
+    ) +
+    theme_classic() +
+    scale_fill_manual(values = pal[[group_var]]) +
+    theme(
+      strip.text = element_text(size = 10),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    )
+  # Add stats if provided
+  if (!is.null(comparisons)) {
+    p <- p +
+      stat_compare_means(
+        comparisons = comparisons,
+        label = "p.signif",
+        method = "wilcox.test"
+      )
+  }
+  return(p)
+}
+
+my_comparisons <- list(
+  list(c("RVVC_pos", "Control_neg")),
+  list(c("0", "5"), c("4", "5"))
+  #list( c("0", "1-3"), c("0", "4-5") )
+)
+
+# quartz(width = 6, height = 6)
+cols <- c("RVVC_pos", "Clinical_score_(0-5)")
+plots <- map2(
+  cols,
+  my_comparisons,
+  ~ plot_factor_violins(
+    data = factors,
+    group_var = .x,
+    comparisons = .y
+  )
+)
+wrap_plots(plots, ncol = 1, axis_titles = "collect")
 ```
 
 # Summary
 
 This file is a fully executable Quarto document with named chunks for reproducibility, caching, and debugging.
 
-
-
-```{r}
+```{r extra}
 #| eval: false
 
 # code not currently in use, but could be usefull
