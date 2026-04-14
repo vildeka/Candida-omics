@@ -66,6 +66,58 @@ library(RaMP)
 select <- dplyr::select
 map <- purrr::map
 rename <- dplyr::rename
+
+# default ggplot2 pallet:
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+gg_color_hue(10)
+library(paletteer)
+
+gene_col <- c(
+  "#4F6980",
+  "#849DB1",
+  "#A2CEAA",
+  "#638B66",
+  "#BFBB60",
+  "#9F8F12",
+  "#F47942",
+  "#FBB04E",
+  "#B66353",
+  "#D7CE9F"
+)
+gene_col <- rev(c(
+  "#6388B4FF",
+  "#8CC2CAFF",
+  "#EF6F6AFF",
+  "#FFAE34FF",
+  "#55AD89FF",
+  "#C3BC3FFF",
+  "#BB7693FF",
+  "#94A323",
+  "#A9B5AEFF",
+  "#E76BF3"
+))
+gene_col <- c(
+  "#B71E42FF",
+  "#DE478EFF",
+  "#BC72F0FF",
+  "#795FAFFF",
+  "#3E8853",
+  "#42BA97",
+  "#FFAE34FF",
+  "#EF6F6AFF",
+  "#8CC2CAFF",
+  "#6388B4FF"
+)
+pal2 <- list(
+  gene_clus = set_names(gene_col, c(paste0("pos_", 1:6), paste0("neg_", 1:4))),
+  pos = set_names(gene_col[1:6], paste0(1:6)),
+  neg = set_names(gene_col[7:10], paste0(1:4))
+)
+
+
 ```
 
 Define consistent colour palettes to ensure visual coherence across all figures.
@@ -289,7 +341,7 @@ So you’re not seeing duplicates because of a mistake — you’re seeing dupli
 
 
 ```{r old}
-#| eval:false
+#| eval: false
 
 make_binary_matrix <- function(database) {
   databases$wiki %>%
@@ -649,6 +701,7 @@ k_clusters = 4
 
 make_gsea_heatmap <- function(
   enrich_obj,
+  gene_col = "pos",
   score_threshold,
   file,
   width = 10,
@@ -681,8 +734,21 @@ make_gsea_heatmap <- function(
     annotation_legend_param = list(set = list(direction = "vertical"))
   )
 
+  # Extract column dendrogram
+  hc <- hclust(dist(t(mat)))
+  dend <- as.dendrogram(hc)
+  # dend <- column_dend(ht)
+  # hc <- as.hclust(dend)
+  groups <- cutree(hc, k = k_clusters)
+
+  weight_col <- colorRamp2(
+    seq(from = 0, to = 1, length.out = 7),
+    c("#EAEBEB", paletteer_c("ggthemes::Sunset-Sunrise Diverging", 7)[-1])
+  )
   column_ha <- HeatmapAnnotation(
     weight = temp$feature.statistics[colnames(mat), ],
+    gr = as.character(groups),
+    col = list(gr = pal2[[gene_col]], weight = weight_col),
     annotation_legend_param = list(weight = list(direction = "vertical"))
   )
 
@@ -692,7 +758,7 @@ make_gsea_heatmap <- function(
     width = unit(ncol(mat) * 0.1, "mm"),
     name = "Present",
     col = col_fun,
-    column_split = 4,
+    column_split = groups,
     cluster_rows = TRUE,
     top_annotation = column_ha,
     right_annotation = row_ha,
@@ -721,13 +787,6 @@ make_gsea_heatmap <- function(
   draw(ht)
   dev.off()
 
-  # Extract column dendrogram
-  hc <- hclust(dist(t(mat)))
-  dend <- as.dendrogram(hc)
-  # dend <- column_dend(ht)
-  # hc <- as.hclust(dend)
-  groups <- cutree(hc, k = k_clusters)
-
   # Return everything useful
   list(
     heatmap = ht,
@@ -742,10 +801,10 @@ make_gsea_heatmap <- function(
 ```{r}
 ht_list_neg <- make_gsea_heatmap(
   enrich.neg,
+  gene_col = "neg",
   score_threshold = 3,
   file = "../Results/GSEA_heatmap_neg.png",
   width = 10,
-  height = 5,
   k_clusters = 4
 )
 
@@ -754,7 +813,7 @@ ht_list_pos <- make_gsea_heatmap(
   score_threshold = 9,
   file = "../Results/GSEA_heatmap_pos.png",
   width = 12,
-  height = 10
+  k_clusters = 6
 )
 ```
 
@@ -819,11 +878,12 @@ plot_top_weights_tidy <- function(
     mutate(feature_id = factor(feature, levels = unique(feature)))
   #mutate(feature_id = factor(feature, levels = rev(unique(feature))))
 
+  gr <- unique(W$clus)
   # Plot
   p <- ggplot(W, aes(x = feature_id, y = value, color = clus)) +
     geom_point(size = 2) +
     geom_segment(aes(xend = feature_id, yend = 0), linewidth = 0.75) +
-    #scale_colour_gradient(low = "grey", high = "black") +
+    scale_colour_manual(values = pal2[["gene_clus"]], na.value = "gray") +
     coord_flip() +
     labs(y = "Weight", x = NULL) +
     theme_bw() +
