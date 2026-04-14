@@ -1,0 +1,875 @@
+---
+title: "Multi-omics integration with MOFA2"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+params:
+  sparse: false
+---
+
+# Overview
+
+This report presents a **structured MOFA2 analysis** integrating transcriptomics, metagenomics, and metabolomics data. The goal is to identify **latent factors capturing shared and view-specific sources of variation**, and to generate a **set of publication-ready figures** that can be combined into a multi‑panel figure.
+
+**Main outcomes**:
+- Latent factor structure across multi‑omics layers
+- Variance explained per factor and per view
+- Associations between factors and clinical / technical covariates
+- Feature loadings driving key factors
+
+---
+
+## Analysis workflow (step‑by‑step)
+
+1. Load required libraries and define plotting palettes
+2. Load omics data and sample metadata
+3. Format MOFA input
+4. Select samples for inclusion
+5. Unsupervised UMAPs
+6. Configure and run the MOFA model
+7. Load trained MOFA model
+8. Perform model diagnostics and quality checks
+9. Covariates- Factor correlation
+10. Annotate latent factors using group information
+11. Feature-level figures
+12. Unified UMAP (all views)
+
+---
+
+## 1. Libraries and global settings
+
+```{r libraries}
+#| code-fold: true
+#| output: false
+#| warning: false
+#| message: false
+
+library(MOFA2)
+library(tidyverse)
+library(jsonlite)
+library(patchwork)
+library(openxlsx)
+
+# remotes::install_github("ncats/RAMP-DB")
+library(RaMP)
+
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
+
+select <- dplyr::select
+map <- purrr::map
+rename <- dplyr::rename
+```
+
+Define consistent colour palettes to ensure visual coherence across all figures.
+```{r colour-pallet}
+#| code-fold: true
+select <- dplyr::select
+map <- purrr::map
+rename <- dplyr::rename
+
+pal <- list(
+  CST = c(
+    "I" = "#148F77",
+    "II" = "#6d9f06",
+    "III" = "#A3E4D7",
+    "IV-B" = "#E794C1",
+    "IV-C" = "#b5cb8c",
+    "V" = "#43BA8F"
+  ),
+  subCST = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#91c5de"
+  ),
+  RVVC = c("#EAEAEA", "#fd814e"),
+  BV = c("#EAEAEA", "#fd814e"),
+  NAC = c("#EAEAEA", "#fd814e"),
+  ST = c("#EAEAEA", "#fd814e"),
+  missing_page = c("#EAEAEA", "#fd814e"),
+  Clin = c("#a5c97b", "#cc93cf", "#de9548", "#63d3b4", "#9e8dec", "#902267"),
+  Clin_gr = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_AS = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_pos = c(
+    "#A6CEE3",
+    "#1F78B4",
+    #"#EAEAEA",
+    #"gray",
+    "#e490c4ff",
+    "#c12d88ff"
+  ), # "#FB9A99", "#E31A1C", "#B2DF8A", "#609c5bff", "#FDBF6F", "#FF7F00",, "#CAB2D6", "#6a3d9a" "#e490c4ff", "#c12d88ff"
+  trx_louvain_7 = c(
+    "#de9548",
+    "#cc93cf",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4",
+    '#FB5273'
+  ),
+  metab_louvain = c(
+    "#cc93cf",
+    "#a5c97b",
+    "#de9548",
+    "#902267",
+    "#9e8dec",
+    "#63d3b4"
+    #'#FB5273'
+  ),
+  microb_louvain = c(
+    "#cc93cf",
+    "#de9548",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4",
+    '#FB5273'
+  ),
+  fun_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273'
+    #"#984EA3"
+    #"#B3CDE3"
+  ),
+  integ_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#984EA3"
+    #"#B3CDE3"
+  ),
+  "Wet_smear:_clue_cells_(y/n)" = c("#2266ac", "#91c5de"),
+  hyphae = c("#f26386", "#fd814e", "#a4d984", "#fbbc52"),
+  pos = c("#91c5de", "#2266ac"),
+  fct1_clus = c("#33A02C", "#B2DF8A", "#FF7F00", "#FDBF6F"), #"#FDBF6F" "#FF7F00", "#CAB2D6", "#6A3D9A"
+  "Clinical_score_(0-5)" = brewer.pal(6, name = "Reds")
+)
+# default ggplot2 pallet:
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+gg_color_hue(4)
+```
+
+## 2. Data loading
+Multi‑omics matrices and sample metadata are loaded from pre‑processed RDS/CSV files. These data have already undergone quality control and normalisation upstream.
+```{r load_data}
+#| warning: false
+#| message: false
+
+comb_meta_path <- "../Results/Combined_gr_meta_data.csv"
+
+# meta data
+meta <- read_csv(comb_meta_path) %>%
+  #rename(sample = "svamp_ID") %>%
+  mutate(across(2:27, ~ factor(.x)))
+
+KEGG_path <- "../../Spatial_DMPA/resources/c2.cp.kegg_legacy.v2023.2.Hs.json"
+GO_path <- "../../Spatial_DMPA/resources/c5.all.v2023.2.Hs.json"
+Wiki_path <- "../resources/wikipathways-20260310-gmt-Homo_sapiens.gmt"
+# TFT_path <- "../../Spatial_DMPA/resources/c3.tft.gtrd.v2023.2.Hs.symbols.gmt"
+
+```
+
+## 7. Load trained MOFA model
+We load the model with the highest elbo score
+```{r load_model}
+#| eval: true
+#| include: true
+#| warning: false
+#| message: false
+#| tbl-colwidths: [60,40]
+
+elbo_table <- read_csv("../Results/MOFA/elbo_table_noS84.csv")
+knitr::kable(elbo_table, )
+best_seed <- elbo_table$seed[which.max(abs(elbo_table$elbo))]
+
+MOFAmodel <- load_model(
+  #"../Results/MOFA/MOFA_matched_seed_50.hdf5"
+  # "../Results/MOFA/MOFA_allBL_seed_"
+  paste0("../Results/MOFA/MOFA_allBL_noS84_seed_", best_seed, ".hdf5")
+)
+```
+
+```{r get-factor-clusters}
+
+# Extract factors, and join metadata
+clusters <- list()
+clusters$fct1_clus <- cluster_samples(MOFAmodel, k = 4, factors = 1)$cluster
+clusters$fct2_clus <- cluster_samples(MOFAmodel, k = 4, factors = 2)$cluster
+clusters$fct4_clus <- cluster_samples(MOFAmodel, k = 4, factors = 4)$cluster
+
+clust <- bind_cols(sample = names(clusters[[1]]), clusters)
+
+meta <- meta %>%
+  dplyr::left_join(., clust, by = "sample") %>%
+  dplyr::mutate(across(all_of(names(clusters)), ~ factor(.x)))
+
+# add meta data to model
+samples_metadata(MOFAmodel) <- samples_metadata(MOFAmodel)[, c(
+  "sample",
+  "group"
+)] %>%
+  left_join(meta, by = c("sample"))
+```
+
+```{r read-db}
+read_json.fun <- function(db) {
+  db <- db %>%
+    map(., ~ as_tibble(.x[4])) %>%
+    bind_rows(., .id = "pathway") %>%
+    mutate(genes = map(db, ~ pluck(.x, "geneSymbols")))
+  return(db)
+}
+
+read_gmt.fun <- function(file) {
+  read_lines("../resources/wikipathways-20260310-gmt-Homo_sapiens.gmt") %>%
+    strsplit("\t") %>%
+    map(
+      ~ tibble(
+        pathway = .x[1],
+        description = .x[2],
+        feature = .x[-c(1, 2)]
+      )
+    ) %>%
+    bind_rows() %>%
+    group_by(pathway) %>%
+    summarise(
+      genes = list(feature),
+      .groups = "drop"
+    ) %>%
+    separate(
+      .,
+      pathway,
+      into = c("pathway", "source", "exactSource", "species"),
+      sep = "%",
+      remove = T
+    )
+}
+
+GO_database <- read_json.fun(fromJSON(GO_path))
+# KEGG_database <- read_json.fun(fromJSON(KEGG_path))
+# Wiki_database <- read_gmt.fun(Wiki_path)
+```
+
+In WikiPathways (and therefore RaMP):
+
+A gene can participate multiple times in a pathway
+Each occurrence may correspond to:
+
+a different node
+a different interaction
+a different chromosomal region
+a different sub-pathway context
+
+RaMP flattens these representations into a long table, which preserves biological structure rather than forcing uniqueness.
+So you’re not seeing duplicates because of a mistake — you’re seeing duplicates because the same gene is referenced multiple times within the same pathway model.
+
+
+```{r old}
+#| eval:false
+
+make_binary_matrix <- function(database) {
+  databases$wiki %>%
+    select(pathway, exactSource, genes) %>%
+    unnest(genes) %>%
+    distinct(pathway, genes) %>%
+    mutate(value = 1) %>%
+    pivot_wider(
+      names_from = genes,
+      values_from = value,
+      values_fill = 0
+    ) %>%
+    select(pathway, genes)
+  column_to_rownames("pathway") %>%
+    as.matrix()
+}
+
+run_single_enrichment <- function(
+  MOFAmodel,
+  binary_matrix,
+  view,
+  factors,
+  sign,
+  statistical.test = "parametric"
+) {
+  run_enrichment(
+    MOFAmodel,
+    view = view,
+    factors = factors,
+    feature.sets = binary_matrix,
+    sign = sign,
+    statistical.test = statistical.test
+  )
+}
+
+run_enrichment_grid <- function(
+  MOFAmodel,
+  databases,
+  views,
+  signs,
+  factors = 1:3,
+  statistical.test = "parametric"
+) {
+  # Precompute binary matrices
+  binary_matrices <- purrr::map(databases, make_binary_matrix)
+
+  # Parameter grid
+  param_grid <- expand.grid(
+    db = names(binary_matrices),
+    view = views,
+    sign = signs,
+    stringsAsFactors = FALSE
+  )
+
+  # Run all combinations
+  results <- purrr::pmap(
+    param_grid,
+    function(db, view, sign) {
+      run_single_enrichment(
+        MOFAmodel = MOFAmodel,
+        binary_matrix = binary_matrices[[db]],
+        view = view,
+        factors = factors,
+        sign = sign,
+        statistical.test = statistical.test
+      )
+    }
+  )
+
+  # Name results clearly
+  names(results) <- paste(
+    param_grid$db,
+    param_grid$view,
+    param_grid$sign,
+    sep = "__"
+  )
+
+  return(results)
+}
+
+databases <- list(
+  KEGG = KEGG_database,
+  GO = GO_database,
+  wiki = Wiki_database
+)
+
+signs <- c("negative", "positive", "all")
+views <- c("Transcriptomics")
+
+enrichment_results <- run_enrichment_grid(
+  MOFAmodel = MOFAmodel,
+  databases = databases,
+  views = views,
+  signs = signs,
+  factors = 1:3
+)
+
+```
+
+
+```{r}
+# initializes the RaMP database object, downloading and caching the latest SQLite database
+# if no version already exists in local cache.
+rampDB <- RaMP()
+
+# note that you can use the following method to check database versions hosted in your
+# computer's local cache and databases that are available to download in our remote repository.
+RaMP::listAvailableRaMPDbVersions()
+
+# RaMP::getPrefixesFromAnalytes(db = rampDB, analyteType = 'metabolite')
+RaMP::getPrefixesFromAnalytes(db = rampDB, analyteType = 'gene')
+```
+
+
+```{r}
+
+# ============================================================
+# STEP 1: Get all pathways available in RaMP
+# (this function is explicitly shown / implied in the vignette)
+# ============================================================
+
+pathways <- RaMP::getPathwayNameList()
+# expected columns typically include:
+# pathway_name, pathway_source, pathway_id (depending on version)
+
+# ============================================================
+# STEP 2: For each pathway, retrieve its analytes
+# IMPORTANT:
+# - RaMP has NO global "pathway x analyte" table
+# - The vignette shows that getAnalyteFromPathway() must be
+#   called per pathway
+# ============================================================
+
+# RaMP_long <- getAnalyteFromPathway(pathways, analyteType = "metabolite")
+RaMP_long <- getAnalyteFromPathway(pathways, analyteType = "gene", )
+RaMP_long <- RaMP_long %>% as_tibble()
+
+table(RaMP_long$pathwayType)
+table(RaMP_long$geneOrCompound)
+
+RaMP_long <- RaMP_long %>%
+  select(
+    pathway = "pathwayName",
+    exactSource = "pathwayId",
+    db = "pathwayType",
+    genes = "analyteName"
+  )
+
+# ============================================================
+# STEP 3: Add GO db to RaMP_long
+# ============================================================
+
+RaMP_long <- GO_database %>%
+  unnest(genes) %>%
+  mutate(db = "GO") %>%
+  filter(grepl("^GOBP_", pathway)) %>%
+  bind_rows(RaMP_long)
+
+# databases:
+table(RaMP_long$db)
+# number of pathways
+table(unique(RaMP_long[, c("pathway", "db")])$db)
+
+# ============================================================
+# STEP 4: Split into individual DB's
+# ============================================================
+
+RaMP_db <- RaMP_long %>%
+  nest(.by = "db") %>%
+  mutate(data = set_names(data, .data[["db"]]))
+
+# ============================================================
+# STEP 4: Build the binary membership matrix
+# rows   = pathways
+# cols   = metabolites (HMDB IDs)
+# values = 0 / 1
+# ============================================================
+
+make_binary_matrix <- function(database) {
+  database %>%
+    # RaMP_db$data$kegg %>%
+    distinct(exactSource, pathway, genes) %>%
+    mutate(value = 1) %>%
+    pivot_wider(
+      id_cols = c(exactSource, pathway),
+      names_from = genes,
+      values_from = value,
+      values_fill = 0
+    ) %>%
+    select(-exactSource) %>%
+    column_to_rownames("pathway") %>%
+    as.matrix()
+}
+
+# Precompute binary matrices
+binary_matrices <- RaMP_db %>%
+  filter(db != "pfocr") %>%
+  mutate(matrix = imap(data, ~ make_binary_matrix(.x)))
+
+# ============================================================
+# STEP 6: Sanity check overlap with MOFA features
+# (this step is CRITICAL)
+# ============================================================
+
+imap(
+  binary_matrices$matrix,
+  ~ length(
+    intersect(
+      colnames(.x),
+      features_names(MOFAmodel)[["Transcriptomics"]]
+    )
+  )
+)
+
+# ============================================================
+# STEP 7: Run MOFA enrichment (UNCHANGED from your pipeline)
+# ============================================================
+
+enrich.pos <-
+  imap(
+    binary_matrices$matrix,
+    ~ run_enrichment(
+      MOFAmodel,
+      view = "Transcriptomics",
+      factors = 1,
+      feature.sets = .x,
+      sign = "positive",
+      statistical.test = "parametric"
+    )
+  )
+
+enrich.neg <-
+  imap(
+    binary_matrices$matrix,
+    ~ run_enrichment(
+      MOFAmodel,
+      view = "Transcriptomics",
+      factors = 1,
+      feature.sets = .x,
+      sign = "negative",
+      statistical.test = "parametric"
+    )
+  )
+
+enrich.both <-
+  imap(
+    binary_matrices$matrix,
+    ~ run_enrichment(
+      MOFAmodel,
+      view = "Transcriptomics",
+      factors = 1,
+      feature.sets = .x,
+      sign = "all",
+      statistical.test = "parametric"
+    )
+  )
+
+keep_slots <- c("pval", "pval.adj", "set.statistics")
+
+
+enrichment_to_tibble <- function(
+  enrichment_obj,
+  keep_slots = c("pval", "pval.adj", "set.statistics")
+) {
+  enrichment_obj %>%
+    imap(function(x, name_outer) {
+      components <- x[intersect(names(x), keep_slots)] %>%
+        imap(function(mat, name_inner) {
+          as_tibble(mat, rownames = "pathway") %>%
+            rename_with(~ paste0(name_inner, "_", .), -pathway)
+        })
+
+      reduce(components, full_join, by = "pathway") %>%
+        arrange(across(starts_with("pval_"), ~.x)) %>%
+        mutate(source = name_outer)
+    })
+}
+enrichment_list <- list(pos = enrich.neg, neg = enrich.pos, both = enrich.both)
+
+result <- map(enrichment_list, enrichment_to_tibble)
+
+# Suppl. Tables per comparison
+imap(
+  result,
+  ~ write.xlsx(
+    .x,
+    keepNA = TRUE,
+    na.string = "",
+    overwrite = TRUE,
+    file = paste0("../Results/Tables/", "GSEA_", .y, ".xlsx")
+  )
+)
+```
+
+The enrichment analysis returns a list of 5 elements:
+
+    **feature.sets:** the feature set matrix filtered by the genes that overlap with the MOFA model.
+    **pval:** the nominal p-values.
+    **pval.adj:** the FDR-adjusted p-values.
+    **feature.statistics:** the feature statistics (i.e. the weights).
+    **set.statistics:** matrices with the gene set statistics.
+    **sigPathways:** list with significant pathways per factor at a specified FDR threshold
+
+
+
+```{r}
+plot_enrichment_heatmap(enrichment_RaMP$GO)
+
+plot_enrichment(enrichment_RaMP$wiki, factor = 1, max.pathways = 15)
+```
+
+
+```{r}
+plot_enrichment_detailed(
+  enrichment.results = enrichment_list$neg$GO,
+  factor = 1,
+  max.pathways = 3
+)
+plot_enrichment_detailed(
+  enrichment.results = enrichment_list$pos$GO,
+  factor = 1,
+  max.pathways = 10
+)
+
+png(height = 25, filename = "./test_GSEA.png")
+p <- plot_enrichment_detailed(
+  enrichment.results = enrichment_list$both$GO,
+  factor = 1,
+  max.pathways = 34,
+)
+dev.off()
+
+ggsave("../Results/test_GSEA.png", height = 25)
+
+db <- enrich.both$GO$feature.sets
+
+```
+
+
+```{r}
+library(tidyverse)
+library(ComplexHeatmap)
+library(circlize)
+
+# Color function
+col_fun <- colorRamp2(
+  c(0, 1),
+  c("#ecc4d0", "#e05e85")
+)
+
+enrich_obj = enrichment_list$neg
+score_threshold = 3
+file = "../Results/GSEA_heatmap_neg.png"
+width = 10
+height = 5
+k_clusters = 4
+
+make_gsea_heatmap <- function(
+  enrich_obj,
+  score_threshold,
+  file,
+  width = 10,
+  height = 6,
+  k_clusters = 4
+) {
+  temp <- enrich_obj$GO
+
+  # Select pathways
+  sets <- rownames(temp$set.statistics)[temp$set.statistics > score_threshold]
+
+  # Matrix prep
+  mat <- temp$feature.sets[sets, , drop = FALSE]
+  mat <- mat[, colSums(mat) != 0] # remove cols sum to zero
+
+  if (nrow(mat) == 0 || ncol(mat) == 0) {
+    warning("Matrix is empty after filtering")
+    return(NULL)
+  }
+
+  # Auto height calculation
+  base_height = 2 # border height
+  per_pathway = 0.1 # height per row
+  max_height = 35 # cap height
+  height <- min(max_height, base_height + nrow(mat) * per_pathway)
+
+  # Annotations
+  row_ha <- rowAnnotation(
+    set = temp$set.statistics[sets, ],
+    annotation_legend_param = list(set = list(direction = "vertical"))
+  )
+
+  column_ha <- HeatmapAnnotation(
+    weight = temp$feature.statistics[colnames(mat), ],
+    annotation_legend_param = list(weight = list(direction = "vertical"))
+  )
+
+  # Heatmap
+  H <- Heatmap(
+    mat,
+    width = unit(ncol(mat) * 0.1, "mm"),
+    name = "Present",
+    col = col_fun,
+    column_split = 4,
+    cluster_rows = TRUE,
+    top_annotation = column_ha,
+    right_annotation = row_ha,
+    row_names_side = "right",
+    show_column_names = FALSE,
+    column_names_rot = 90,
+    row_names_gp = gpar(fontsize = 7),
+    heatmap_legend_param = list(
+      at = c(0, 1),
+      labels = c("No", "Yes"),
+      direction = "vertical"
+    )
+  )
+
+  # Draw once (needed for dendrogram extraction)
+  ht <- draw(
+    H,
+    heatmap_legend_side = "left",
+    annotation_legend_side = "left",
+    merge_legend = TRUE,
+    padding = unit(c(2, 5, 2, 30), "mm")
+  )
+
+  # Save plot
+  png(file = file, units = "in", res = 600, width = width, height = height)
+  draw(ht)
+  dev.off()
+
+  # Extract column dendrogram
+  hc <- hclust(dist(t(mat)))
+  dend <- as.dendrogram(hc)
+  # dend <- column_dend(ht)
+  # hc <- as.hclust(dend)
+  groups <- cutree(hc, k = k_clusters)
+
+  # Return everything useful
+  list(
+    heatmap = ht,
+    matrix = mat,
+    dendrogram = dend,
+    hclust = hc,
+    column_groups = groups
+  )
+}
+```
+
+```{r}
+ht_list_neg <- make_gsea_heatmap(
+  enrich.neg,
+  score_threshold = 3,
+  file = "../Results/GSEA_heatmap_neg.png",
+  width = 10,
+  height = 5,
+  k_clusters = 4
+)
+
+ht_list_pos <- make_gsea_heatmap(
+  enrich.pos,
+  score_threshold = 9,
+  file = "../Results/GSEA_heatmap_pos.png",
+  width = 12,
+  height = 10
+)
+```
+
+```{r}
+# Extract the row dendrogram
+dend = column_dend(draw(H))
+
+# Convert to hclust if needed for standard R functions
+hc = as.hclust(dend)
+
+# Cut the tree at a specific height or into k groups
+groups = cutree(hc, k = 4)
+```
+
+
+```{r}
+plot_top_weights_tidy <- function(
+  weights_df,
+  nfeatures = 10,
+  fact = 1,
+  abs = TRUE,
+  scale = TRUE,
+  sign = "all"
+) {
+  # Remove zeros
+  W <- weights_df %>% filter(value != 0)
+
+  W <- W %>%
+    filter(grepl(paste0("^Factor", fact, "$", collapse = "|"), .$factor))
+
+  # Scale
+  if (scale) {
+    W <- W %>% mutate(value = value / max(abs(value)))
+  }
+
+  # Sign
+  W <- W %>%
+    mutate(sign_label = if_else(value > 0, "+", "-"))
+
+  if (sign == "positive") {
+    W <- W %>% filter(value > 0)
+  } else if (sign == "negative") {
+    W <- W %>% filter(value < 0)
+  }
+
+  if (abs) {
+    W <- W %>% mutate(value = abs(value))
+  }
+
+  # Select top features per factor
+  W <- W %>%
+    group_by(factor) %>%
+    slice_max(order_by = value, n = nfeatures) %>%
+    #arrange(value) %>%
+    #fct_reorder(feature, value) %>%
+    #mutate(feature_id = factor(feature)) %>%
+    ungroup()
+
+  # Factor ordering
+  W <- W %>%
+    arrange(factor, value) %>%
+    mutate(feature_id = factor(feature, levels = unique(feature)))
+  #mutate(feature_id = factor(feature, levels = rev(unique(feature))))
+
+  # Plot
+  p <- ggplot(W, aes(x = feature_id, y = value, color = clus)) +
+    geom_point(size = 2) +
+    geom_segment(aes(xend = feature_id, yend = 0), linewidth = 0.75) +
+    #scale_colour_gradient(low = "grey", high = "black") +
+    coord_flip() +
+    labs(y = "Weight", x = NULL) +
+    theme_bw() +
+    theme(
+      axis.text.y = element_text(size = rel(1.1)),
+      panel.grid.major.y = element_blank(),
+      legend.position = "top"
+    ) +
+    facet_wrap(~factor, nrow = 1, scales = "free")
+
+  if (abs) {
+    p <- p +
+      ylim(0, max(W$value) + 0.1) +
+      geom_text(aes(label = sign_label), y = max(W$value) + 0.1, size = 4)
+  }
+
+  return(p)
+}
+```
+
+```{r}
+groups <- list(
+  neg = ht_list_neg$column_groups,
+  pos = ht_list_pos$column_groups
+)
+
+groups <- groups %>%
+  imap(~ setNames(paste0(.y, "_", .x), names(.x))) %>%
+  flatten_chr()
+weights <- get_weights(MOFAmodel, as.data.frame = TRUE) %>%
+  as_tibble() %>%
+  filter(view == "Transcriptomics") %>%
+  #filter(factor == "Factor1") %>% pull(feature) %>% unique()
+  #mutate(clus = paste0(ht_list_neg$column_groups[.$feature], "_neg")) %>%
+  #mutate(clus = paste0(ht_list_pos$column_groups[.$feature], "_pos")) %>%
+  mutate(clus = ifelse(factor == "Factor1", groups[.$feature], NA))
+
+# plot_weights(MOFAmodel, factor = 1, view = "Transcriptomics" )
+
+plot_top_weights(
+  MOFAmodel,
+  fact = c(1, 2),
+  view = "Transcriptomics",
+  nfeatures = 10
+)
+
+plot_top_weights_tidy(weights, nfeatures = 35, fact = c(1))
+
+```
