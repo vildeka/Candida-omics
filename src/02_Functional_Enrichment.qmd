@@ -101,11 +101,11 @@ gene_col <- rev(c(
 ))
 gene_col <- c(
   "#B71E42FF",
-  "#DE478EFF",
+  "#DE478E",
   "#BC72F0FF",
   "#795FAFFF",
-  "#3E8853",
-  "#42BA97",
+  "#D53DD0",
+  "#EA6312",
   "#FFAE34FF",
   "#EF6F6AFF",
   "#8CC2CAFF",
@@ -636,6 +636,14 @@ imap(
 )
 ```
 
+These are the steps for doing Gene Set Enrichment Analysis (GSEA) with MOFA:
+
+    (1) **Define your gene set matrix:** this can be specified as a binary matrix where rows are gene sets and columns are genes. A value of 1 indicates that gene j belongs to pathway i. A value of 0 indicates elsewise.
+    (2) **Select a gene set statistic:** the statistic used to quantify the scores at the pathway level. Must be one of the following: mean.diff (difference in the average weight between foreground and background genes) or rank.sum (difference in the sum of ranks between foreground and background genes).
+    (3) **Select a statistical test:** the statistical test used to compute the significance of the gene set statistics under a competitive null hypothesis. Must be one of the following: parametric (a simple and very liberal parametric t-test), cor.adj.parametric (parametric t-test adjusted by the correlation between features), permutation (unparametric, the null distribution is created by permuting the weights. This option is computationally expensive, but it preserves the correlation structure between features in the data.).
+
+An important consideration when running GSEA is that MOFA contains positive and negative weights. There will be cases where the genes with negative weights all belong to a specific pathway but genes with positive weights belong to other pathways. If this is true, doing GSEA with all of them together could dilute the signal. Hence, we recommend the user to do GSEA separately for (+) and (-) weights, and possibly also jointly with all weights.
+
 The enrichment analysis returns a list of 5 elements:
 
     **feature.sets:** the feature set matrix filtered by the genes that overlap with the MOFA model.
@@ -702,7 +710,9 @@ k_clusters = 4
 make_gsea_heatmap <- function(
   enrich_obj,
   gene_col = "pos",
+  cell_width = 0.1,
   score_threshold,
+  gene_treshold = 0,
   file,
   width = 10,
   height = 6,
@@ -716,6 +726,10 @@ make_gsea_heatmap <- function(
   # Matrix prep
   mat <- temp$feature.sets[sets, , drop = FALSE]
   mat <- mat[, colSums(mat) != 0] # remove cols sum to zero
+
+  # filter genes
+  keep_genes <- temp$feature.statistics[colnames(mat), ] > gene_treshold
+  mat <- mat[, keep_genes]
 
   if (nrow(mat) == 0 || ncol(mat) == 0) {
     warning("Matrix is empty after filtering")
@@ -755,7 +769,7 @@ make_gsea_heatmap <- function(
   # Heatmap
   H <- Heatmap(
     mat,
-    width = unit(ncol(mat) * 0.1, "mm"),
+    width = unit(ncol(mat) * cell_width, "mm"),
     name = "Present",
     col = col_fun,
     column_split = groups,
@@ -798,12 +812,22 @@ make_gsea_heatmap <- function(
 }
 ```
 
+#### gene_treshold:
+the default of 0 makes sure to remove genes that have the oposite weight to the specified
+these are simply set to weight = 0 in the MOFA enrichment function, but retained in the matrix
+
+#### score_threshold:
+the default mean.diff represents the difference in the average weight between foreground and background genes
+
 ```{r}
+
 ht_list_neg <- make_gsea_heatmap(
   enrich.neg,
   gene_col = "neg",
   score_threshold = 3,
-  file = "../Results/GSEA_heatmap_neg.png",
+  gene_treshold = 0,
+  cell_width = 0.1,
+  file = "../Results/GSEA_heatmap_neg_3.png",
   width = 10,
   k_clusters = 4
 )
@@ -811,25 +835,15 @@ ht_list_neg <- make_gsea_heatmap(
 ht_list_pos <- make_gsea_heatmap(
   enrich.pos,
   score_threshold = 9,
+  gene_treshold = 0,
   file = "../Results/GSEA_heatmap_pos.png",
   width = 12,
   k_clusters = 6
 )
 ```
 
-```{r}
-# Extract the row dendrogram
-dend = column_dend(draw(H))
 
-# Convert to hclust if needed for standard R functions
-hc = as.hclust(dend)
-
-# Cut the tree at a specific height or into k groups
-groups = cutree(hc, k = 4)
-```
-
-
-```{r}
+```{r weight_figure}
 plot_top_weights_tidy <- function(
   weights_df,
   nfeatures = 10,
@@ -905,6 +919,7 @@ plot_top_weights_tidy <- function(
 ```
 
 ```{r}
+# intersect(names(ht_list_neg$column_groups), names(ht_list_pos$column_groups))
 groups <- list(
   neg = ht_list_neg$column_groups,
   pos = ht_list_pos$column_groups
@@ -931,5 +946,90 @@ plot_top_weights(
 )
 
 plot_top_weights_tidy(weights, nfeatures = 35, fact = c(1))
+
+plot_enrichment(enrich.neg$GO, factor = 1, max.pathways = 15)
+
+plot_enrichment_detailed(
+  enrichment.results = enrich.neg$GO,
+  factor = 1,
+  max.genes = 7,
+  max.pathways = 3
+)
+```
+
+
+
+```{r}
+phtw <- c(
+  "GOBP_KERATINOCYTE_DIFFERENTIATION",
+  "GOBP_FATTY_ACID_METABOLIC_PROCESS",
+  "GOBP LIPID METABOLIC PROCESS"
+)
+plot_weights_pathways <- function(weights_df, pathways, n_label = 5) {
+  wgt <- filter(weights, factor == "Factor1") %>%
+    select(genes = "feature", weight = "value", clus)
+  weights_df <- enrich.neg$GO$feature.sets %>%
+    as_tibble(rownames = "pathway") %>%
+    pivot_longer(-pathway, names_to = "genes") %>%
+    filter(value == 1) %>%
+    mutate(Ngenes = n(), .by = "pathway") %>%
+    left_join(., wgt, by = "genes") %>%
+    left_join(., result$neg$GO, by = "pathway")
+
+  df <- weights_df %>%
+    filter(pathway %in% phtw) %>% # assumes you have pathway column
+    group_by(pathway) %>%
+    mutate(
+      value_scaled = weight / max(abs(weight)),
+      rank = rank(-abs(value_scaled))
+    ) %>%
+    ungroup() %>%
+    mutate(top = rank(-abs(value_scaled)) <= n_label) %>%
+    mutate(pathway = paste0(pathway, "\n", "n=", Ngenes))
+
+  # top genes to label
+  df_labels <- df %>%
+    group_by(pathway) %>%
+    slice_max(order_by = abs(value_scaled), n = n_label) %>%
+    ungroup()
+
+  position = position_jitter(width = 0, height = 0.4, seed = 123)
+
+  ggplot(df, aes(x = value_scaled, y = pathway)) +
+    geom_violin(
+      bounds = c(-0.7, 0.7),
+      colour = alpha("gray", alpha = 0.6),
+      scale = "count",
+      adjust = 0.5
+    ) +
+    geom_point(data = df %>% filter(!top), color = "grey70", size = 1.5, ) +
+
+    geom_jitter(
+      aes(fill = clus),
+      data = df_labels,
+      size = 3,
+      shape = 21,
+      position = position
+    ) +
+    geom_text_repel(
+      data = df_labels,
+      aes(label = genes),
+      hjust = -0.2,
+      size = 3,
+      position = position
+    ) +
+    scale_fill_manual(values = pal2$gene_clus, na.value = "black") +
+    labs(x = "Weight (scaled)", y = NULL) +
+
+    theme_bw() +
+    theme(
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text.y = element_blank() #element_text(size = 10)
+    ) +
+    facet_wrap(~pathway, ncol = 1, scales = "free") +
+
+    xlim(min(df$value_scaled), max(df$value_scaled) + 0.1)
+}
 
 ```
