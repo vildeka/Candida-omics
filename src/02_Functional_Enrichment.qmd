@@ -967,7 +967,7 @@ phtw <- c(
 )
 plot_weights_pathways <- function(weights_df, pathways, n_label = 5) {
   wgt <- filter(weights, factor == "Factor1") %>%
-    select(genes = "feature", weight = "value", clus)
+    select(genes = "feature", weight = "value", clus, factor)
   weights_df <- enrich.neg$GO$feature.sets %>%
     as_tibble(rownames = "pathway") %>%
     pivot_longer(-pathway, names_to = "genes") %>%
@@ -978,13 +978,9 @@ plot_weights_pathways <- function(weights_df, pathways, n_label = 5) {
 
   df <- weights_df %>%
     filter(pathway %in% phtw) %>% # assumes you have pathway column
-    group_by(pathway) %>%
-    mutate(
-      value_scaled = weight / max(abs(weight)),
-      rank = rank(-abs(value_scaled))
-    ) %>%
-    ungroup() %>%
-    mutate(top = rank(-abs(value_scaled)) <= n_label) %>%
+    mutate(value_scaled = weight / max(abs(weight)), .by = "factor") %>%
+    mutate(rank = rank(-abs(value_scaled)), .by = "pathway") %>%
+    mutate(top = rank <= n_label) %>%
     mutate(pathway = paste0(pathway, "\n", "n=", Ngenes))
 
   # top genes to label
@@ -997,7 +993,7 @@ plot_weights_pathways <- function(weights_df, pathways, n_label = 5) {
 
   ggplot(df, aes(x = value_scaled, y = pathway)) +
     geom_violin(
-      bounds = c(-0.7, 0.7),
+      # bounds = c(-0.7, 0.7),
       colour = alpha("gray", alpha = 0.6),
       scale = "count",
       adjust = 0.5
