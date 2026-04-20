@@ -51,12 +51,12 @@ This report presents a **structured MOFA2 analysis** integrating transcriptomics
 #| output: false
 #| warning: false
 #| message: false
-
 library(MOFA2)
 library(tidyverse)
 library(jsonlite)
 library(patchwork)
 library(openxlsx)
+library(ggrepel)
 
 # remotes::install_github("ncats/RAMP-DB")
 library(RaMP)
@@ -116,8 +116,6 @@ pal2 <- list(
   pos = set_names(gene_col[1:6], paste0(1:6)),
   neg = set_names(gene_col[7:10], paste0(1:4))
 )
-
-
 ```
 
 Define consistent colour palettes to ensure visual coherence across all figures.
@@ -230,7 +228,6 @@ Multi‑omics matrices and sample metadata are loaded from pre‑processed RDS/C
 ```{r load_data}
 #| warning: false
 #| message: false
-
 comb_meta_path <- "../Results/Combined_gr_meta_data.csv"
 
 # meta data
@@ -242,7 +239,6 @@ KEGG_path <- "../../Spatial_DMPA/resources/c2.cp.kegg_legacy.v2023.2.Hs.json"
 GO_path <- "../../Spatial_DMPA/resources/c5.all.v2023.2.Hs.json"
 Wiki_path <- "../resources/wikipathways-20260310-gmt-Homo_sapiens.gmt"
 # TFT_path <- "../../Spatial_DMPA/resources/c3.tft.gtrd.v2023.2.Hs.symbols.gmt"
-
 ```
 
 ## 7. Load trained MOFA model
@@ -253,7 +249,6 @@ We load the model with the highest elbo score
 #| warning: false
 #| message: false
 #| tbl-colwidths: [60,40]
-
 elbo_table <- read_csv("../Results/MOFA/elbo_table_noS84.csv")
 knitr::kable(elbo_table, )
 best_seed <- elbo_table$seed[which.max(abs(elbo_table$elbo))]
@@ -266,7 +261,6 @@ MOFAmodel <- load_model(
 ```
 
 ```{r get-factor-clusters}
-
 # Extract factors, and join metadata
 clusters <- list()
 clusters$fct1_clus <- cluster_samples(MOFAmodel, k = 4, factors = 1)$cluster
@@ -342,7 +336,6 @@ So you’re not seeing duplicates because of a mistake — you’re seeing dupli
 
 ```{r old}
 #| eval: false
-
 make_binary_matrix <- function(database) {
   databases$wiki %>%
     select(pathway, exactSource, genes) %>%
@@ -438,7 +431,6 @@ enrichment_results <- run_enrichment_grid(
   signs = signs,
   factors = 1:3
 )
-
 ```
 
 
@@ -457,7 +449,6 @@ RaMP::getPrefixesFromAnalytes(db = rampDB, analyteType = 'gene')
 
 
 ```{r}
-
 # ============================================================
 # STEP 1: Get all pathways available in RaMP
 # (this function is explicitly shown / implied in the vignette)
@@ -569,6 +560,7 @@ enrich.pos <-
       factors = 1,
       feature.sets = .x,
       sign = "positive",
+      alpha = 0.1, # FDR treshold
       statistical.test = "parametric"
     )
   )
@@ -579,9 +571,10 @@ enrich.neg <-
     ~ run_enrichment(
       MOFAmodel,
       view = "Transcriptomics",
-      factors = 1,
+      factors = c(1, 2),
       feature.sets = .x,
       sign = "negative",
+      alpha = 0.1, # FDR treshold
       statistical.test = "parametric"
     )
   )
@@ -595,6 +588,7 @@ enrich.both <-
       factors = 1,
       feature.sets = .x,
       sign = "all",
+      alpha = 0.1, # FDR treshold
       statistical.test = "parametric"
     )
   )
@@ -602,24 +596,54 @@ enrich.both <-
 keep_slots <- c("pval", "pval.adj", "set.statistics")
 
 
+# enrichment_to_tibble <- function(
+#   enrichment_obj,
+#   keep_slots = c("pval", "pval.adj", "set.statistics")
+# ) {
+#   enrichment_obj %>%
+#     imap(function(x, name_outer) {
+#       components <- x[intersect(names(x), keep_slots)] %>%
+#         imap(function(mat, name_inner) {
+#           as_tibble(mat, rownames = "pathway") %>%
+#             rename_with(~ paste0(name_inner, "_", .), -pathway)
+#         })
+
+#       reduce(components, full_join, by = "pathway") %>%
+#         #arrange(across(starts_with("pval_"), ~.x)) %>%
+#         mutate(source = name_outer)
+#     })
+# }
+
 enrichment_to_tibble <- function(
   enrichment_obj,
   keep_slots = c("pval", "pval.adj", "set.statistics")
 ) {
   enrichment_obj %>%
-    imap(function(x, name_outer) {
-      components <- x[intersect(names(x), keep_slots)] %>%
-        imap(function(mat, name_inner) {
-          as_tibble(mat, rownames = "pathway") %>%
-            rename_with(~ paste0(name_inner, "_", .), -pathway)
-        })
+    imap(
+      .,
+      ~ .x %>% # enrich.neg$GO %>%
+        enframe(.) %>%
+        filter(name %in% keep_slots) %>%
+        mutate(data = map(value, ~ as_tibble(.x, rownames = "pathway"))) %>%
+        select(name, data) %>%
+        mutate(
+          data = map2(data, name, function(df, nm) {
+            rename_with(
+              df,
+              function(col) paste0(nm, "_", col),
+              contains("Factor")
+            )
+          })
+        ) %>%
+        pull(data) %>%
+        reduce(full_join, by = "pathway") %>%
 
-      reduce(components, full_join, by = "pathway") %>%
         arrange(across(starts_with("pval_"), ~.x)) %>%
-        mutate(source = name_outer)
-    })
+        mutate(source = .y)
+    )
 }
-enrichment_list <- list(pos = enrich.neg, neg = enrich.pos, both = enrich.both)
+
+enrichment_list <- list(pos = enrich.pos, neg = enrich.neg, both = enrich.both)
 
 result <- map(enrichment_list, enrichment_to_tibble)
 
@@ -658,7 +682,7 @@ The enrichment analysis returns a list of 5 elements:
 ```{r}
 plot_enrichment_heatmap(enrichment_RaMP$GO)
 
-plot_enrichment(enrichment_RaMP$wiki, factor = 1, max.pathways = 15)
+plot_enrichment(enrich.neg$GO, factor = 1, max.pathways = 15)
 ```
 
 
@@ -685,14 +709,13 @@ dev.off()
 ggsave("../Results/test_GSEA.png", height = 25)
 
 db <- enrich.both$GO$feature.sets
-
 ```
 
 
 ```{r}
-library(tidyverse)
 library(ComplexHeatmap)
 library(circlize)
+library(paletteer)
 
 # Color function
 col_fun <- colorRamp2(
@@ -700,18 +723,18 @@ col_fun <- colorRamp2(
   c("#ecc4d0", "#e05e85")
 )
 
-enrich_obj = enrichment_list$neg
-score_threshold = 3
-file = "../Results/GSEA_heatmap_neg.png"
-width = 10
-height = 5
-k_clusters = 4
+# enrich_obj = enrichment_list$neg
+# score_threshold = 3
+# file = "../Results/GSEA_heatmap_neg.png"
+# width = 10
+# height = 5
+# k_clusters = 4
 
 make_gsea_heatmap <- function(
   enrich_obj,
   gene_col = "pos",
   cell_width = 0.1,
-  score_threshold,
+  score_threshold = 3,
   gene_treshold = 0,
   file,
   width = 10,
@@ -721,7 +744,19 @@ make_gsea_heatmap <- function(
   temp <- enrich_obj$GO
 
   # Select pathways
-  sets <- rownames(temp$set.statistics)[temp$set.statistics > score_threshold]
+  if (length(score_threshold) == 1) {
+    sets <- rownames(temp$set.statistics)[
+      abs(temp$set.statistics) > score_threshold
+    ]
+  } else {
+    set <- tibble(
+      name = rownames(temp$set.statistics),
+      value = as.vector(temp$set.statistics)
+    )
+    sets_pos <- set %>% filter(value > 0 & value > score_threshold[1])
+    sets_neg <- set %>% filter(value < 0 & abs(value) > score_threshold[2])
+    sets <- c(sets_pos$name, sets_neg$name)
+  }
 
   # Matrix prep
   mat <- temp$feature.sets[sets, , drop = FALSE]
@@ -745,6 +780,7 @@ make_gsea_heatmap <- function(
   # Annotations
   row_ha <- rowAnnotation(
     set = temp$set.statistics[sets, ],
+    p_val = temp$pval.adj[sets, ],
     annotation_legend_param = list(set = list(direction = "vertical"))
   )
 
@@ -820,7 +856,6 @@ these are simply set to weight = 0 in the MOFA enrichment function, but retained
 the default mean.diff represents the difference in the average weight between foreground and background genes
 
 ```{r}
-
 ht_list_neg <- make_gsea_heatmap(
   enrich.neg,
   gene_col = "neg",
@@ -840,6 +875,15 @@ ht_list_pos <- make_gsea_heatmap(
   width = 12,
   k_clusters = 6
 )
+
+ht_list_pos <- make_gsea_heatmap(
+  enrich.both,
+  score_threshold = c(9, 3),
+  gene_treshold = 0,
+  file = "../Results/GSEA_heatmap_both.png",
+  width = 12,
+  k_clusters = 6
+)
 ```
 
 
@@ -855,7 +899,8 @@ plot_top_weights_tidy <- function(
   # Remove zeros
   W <- weights_df %>% filter(value != 0)
 
-  W <- W %>%
+  W <- W
+  weights %>%
     filter(grepl(paste0("^Factor", fact, "$", collapse = "|"), .$factor))
 
   # Scale
@@ -918,7 +963,7 @@ plot_top_weights_tidy <- function(
 }
 ```
 
-```{r}
+```{r plot-weights}
 # intersect(names(ht_list_neg$column_groups), names(ht_list_pos$column_groups))
 groups <- list(
   neg = ht_list_neg$column_groups,
@@ -932,11 +977,14 @@ weights <- get_weights(MOFAmodel, as.data.frame = TRUE) %>%
   as_tibble() %>%
   filter(view == "Transcriptomics") %>%
   #filter(factor == "Factor1") %>% pull(feature) %>% unique()
-  #mutate(clus = paste0(ht_list_neg$column_groups[.$feature], "_neg")) %>%
-  #mutate(clus = paste0(ht_list_pos$column_groups[.$feature], "_pos")) %>%
+  arrange(factor, desc(abs(value))) %>%
   mutate(clus = ifelse(factor == "Factor1", groups[.$feature], NA))
 
-# plot_weights(MOFAmodel, factor = 1, view = "Transcriptomics" )
+plot_top_weights_tidy(weights, nfeatures = 35, fact = c(1))
+
+
+# MOFA functions:
+plot_enrichment(enrich.neg$GO, factor = 1, max.pathways = 35)
 
 plot_top_weights(
   MOFAmodel,
@@ -944,10 +992,6 @@ plot_top_weights(
   view = "Transcriptomics",
   nfeatures = 10
 )
-
-plot_top_weights_tidy(weights, nfeatures = 35, fact = c(1))
-
-plot_enrichment(enrich.neg$GO, factor = 1, max.pathways = 15)
 
 plot_enrichment_detailed(
   enrichment.results = enrich.neg$GO,
@@ -959,29 +1003,45 @@ plot_enrichment_detailed(
 
 
 
-```{r}
-phtw <- c(
-  "GOBP_KERATINOCYTE_DIFFERENTIATION",
-  "GOBP_FATTY_ACID_METABOLIC_PROCESS",
-  "GOBP LIPID METABOLIC PROCESS"
-)
-plot_weights_pathways <- function(weights_df, pathways, n_label = 5) {
+```{r plot-pathway-indvidualy}
+p.val_round <- function(p.val) {
+  case_when(
+    p.val >= 0.05 ~ sprintf("%.2f", p.val),
+    p.val >= 0.001 ~ sprintf("%.3f", p.val),
+    TRUE ~ sprintf("%.1e", p.val)
+  )
+}
+
+plot_weights_pathways <- function(weights_df, phtw, n_label = 5) {
   wgt <- filter(weights, factor == "Factor1") %>%
     select(genes = "feature", weight = "value", clus, factor)
+
   weights_df <- enrich.neg$GO$feature.sets %>%
     as_tibble(rownames = "pathway") %>%
     pivot_longer(-pathway, names_to = "genes") %>%
     filter(value == 1) %>%
     mutate(Ngenes = n(), .by = "pathway") %>%
     left_join(., wgt, by = "genes") %>%
-    left_join(., result$neg$GO, by = "pathway")
+    left_join(., result$neg$GO, by = "pathway") %>%
+    arrange(pval.adj_Factor1)
 
   df <- weights_df %>%
-    filter(pathway %in% phtw) %>% # assumes you have pathway column
+    filter(pathway %in% phtw) %>%
     mutate(value_scaled = weight / max(abs(weight)), .by = "factor") %>%
     mutate(rank = rank(-abs(value_scaled)), .by = "pathway") %>%
     mutate(top = rank <= n_label) %>%
-    mutate(pathway = paste0(pathway, "\n", "n=", Ngenes))
+    mutate(
+      pathway = paste0(
+        pathway,
+        "\n",
+        "n=",
+        Ngenes,
+        " (p-adj ",
+        .$pval.adj_Factor1,
+        # p.val_round(.$pval.adj_Factor1),
+        ")"
+      )
+    )
 
   # top genes to label
   df_labels <- df %>%
@@ -998,12 +1058,12 @@ plot_weights_pathways <- function(weights_df, pathways, n_label = 5) {
       scale = "count",
       adjust = 0.5
     ) +
-    geom_point(data = df %>% filter(!top), color = "grey70", size = 1.5, ) +
+    geom_point(data = df %>% filter(!top), color = "grey70", size = 0.5, ) +
 
     geom_jitter(
       aes(fill = clus),
       data = df_labels,
-      size = 3,
+      size = 1,
       shape = 21,
       position = position
     ) +
@@ -1011,13 +1071,13 @@ plot_weights_pathways <- function(weights_df, pathways, n_label = 5) {
       data = df_labels,
       aes(label = genes),
       hjust = -0.2,
-      size = 3,
+      size = 1,
       position = position
     ) +
     scale_fill_manual(values = pal2$gene_clus, na.value = "black") +
     labs(x = "Weight (scaled)", y = NULL) +
 
-    theme_bw() +
+    theme_bw(base_size = 11 / .pt) +
     theme(
       panel.grid.major.y = element_blank(),
       panel.grid.minor = element_blank(),
@@ -1028,4 +1088,27 @@ plot_weights_pathways <- function(weights_df, pathways, n_label = 5) {
     xlim(min(df$value_scaled), max(df$value_scaled) + 0.1)
 }
 
+phtw <- c(
+  "GOBP_KERATINOCYTE_DIFFERENTIATION",
+  "GOBP_FATTY_ACID_METABOLIC_PROCESS",
+  "GOBP_LIPID_METABOLIC_PROCESS"
+)
+phtw <- enrich.neg$GO$sigPathways[[1]] %>% split(., ceiling(seq_along(.) / 5))
+phtw <- rownames(ht_list_neg$matrix) %>% split(., ceiling(seq_along(.) / 5))
+
+plt_list <- map(phtw, ~ plot_weights_pathways(weights, .x))
+
+ggsave(
+  filename = paste0("../Results/GO_enrichmentplots.pdf"),
+  gridExtra::marrangeGrob(
+    grobs = plt_list,
+    ncol = 1,
+    top = NULL,
+    nrow = 1,
+    height = 11.69,
+    width = 4
+  )
+)
+plot_weights_pathways(weights, c("GOBP_DEFENSE_RESPONSE"))
+enrich.neg$GO$pval.adj[phtw[[1]][1:3]]
 ```
