@@ -60,7 +60,7 @@ map <- purrr::map
 #################
 # COLOUR PALLET #
 #################
-pal <- c("#902267", "#ffa998", "#f588af", "gray") # #e05e85
+pal <- c("#902267", "#ffa998", "#f588af", "gray") # "gray", #e05e85
 pal2 <- c(
   "#f26386",
   "#f588af",
@@ -70,6 +70,7 @@ pal2 <- c(
   "#fd814e",
   "gray"
 )
+RVVC_pal = c("#A6CEE3", "#1F78B4", "#e490c4ff", "#c12d88ff")
 
 # setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
 
@@ -109,6 +110,7 @@ meta_gr <- read_csv(comb_meta_path) %>%
   #rename(sample = "svamp_ID") %>%
   mutate(across(2:25, ~ factor(.x)))
 ```
+
 
 ```{r group-assignment}
 g <- c(
@@ -173,6 +175,7 @@ gr_data <- meta_data %>%
   ) %>%
   select("svamp_ID", group, everything())
 ```
+
 
 ## Step 2: Filter low count samples
 
@@ -736,62 +739,103 @@ plot(barplot)
 
 
 ```{r}
+#| fig-width: 15
+#| fig-height: 10
+library(ggnewscale)
 ####################################################
-# PLOT STRAIN LEVEL ABUNDANCE OF REMAINING SAMPLES #
+# PLOT GENUS LEVEL ABUNDANCE BY GROUPS #
 ####################################################
 col_pal <- df_long_ %>% select(clade_name, col) %>% unique() %>% deframe()
 colourCount = length(unique(df_long_$clade_name))
 getPalette = colorRampPalette(brewer.pal(9, "Set1"))
-
+lgd <- get_legend(barplot)
 
 annot_bar <- df_long_ %>%
-  left_join(., select(meta_gr, sample, RVVC_AS)) %>%
-  distinct(sample, RVVC_AS)
+  left_join(., select(meta_gr, sample, RVVC_pos)) %>%
+  #mutate(RVVC_pos = factor(RVVC_pos)) %>%
+  mutate(sample_ = factor(sample, levels = factor.fun(.))) %>%
+  arrange(RVVC_pos, sample_) %>%
+  distinct(sample, RVVC_pos)
 
+sample_order <- as.vector(annot_bar$sample)
 #plot the ctrls
 # quartz(width = 15, height = 6, dpi = 150)
 barplot <- df_long_ %>%
-  left_join(., select(meta_gr, sample, RVVC_AS)) %>%
-  ggplot(
+  left_join(., select(meta_gr, sample, RVVC_pos), by = "sample") %>%
+  mutate(sample = factor(sample, levels = sample_order)) %>%
+  #mutate(sample = factor(sample, levels = annot_bar$sample)) %>%
+  split(~RVVC_pos) %>%
+  map2(
     .,
-    aes(x = sample, y = abundance, fill = clade_name) # round(value, digits = 3)
-  ) +
+    split(annot_bar, ~RVVC_pos),
+    ~ .x %>%
+      ggplot(
+        .,
+        aes(x = .data[["sample"]], y = abundance) # round(value, digits = 3)
+      ) +
 
-  # ---- Annotation bar at x = -0.5 ----
-  geom_tile(
-    data = annot_bar,
-    aes(x = sample, y = -0.5, fill = RVVC_AS),
-    inherit.aes = FALSE,
-    height = 0.7,
-    width = 0.9
-  ) +
+      # ---- Annotation bar at x = -0.5 ----
+      geom_tile(
+        data = .y,
+        aes(x = sample, y = 100.7, fill = RVVC_pos),
+        inherit.aes = FALSE,
+        height = 0.9, #
+        #width = 0.9
+      ) +
+      scale_fill_manual(values = RVVC_pal) +
+      guides(
+        fill = guide_legend(
+          override.aes = list(size = 2),
+          ncol = 1,
+          byrow = T,
+          keyheight = .4,
+          keywidth = .6
+        )
+      ) +
+      new_scale_fill() +
 
-  # ---- Main stacked bars ----
-  geom_col(width = .9, position = "stack") +
-  # geom_text(aes(label = value), position = position_stack(vjust = 0.5)) +
-  scale_fill_manual(values = col_pal) + # pal[1:colourCount]
-  guides(
-    fill = guide_legend(
-      override.aes = list(size = 2),
-      ncol = 4,
-      byrow = FALSE,
-      keyheight = .4,
-      keywidth = .6
-    )
-  ) +
-  theme_classic() +
-  coord_cartesian(expand = F) +
-  theme(
-    plot.margin = unit(c(1, 0.5, 1, 0), "cm"),
-    legend.spacing.y = unit(.5, 'cm'),
-    legend.title = element_blank(),
-    legend.text = element_text(margin = margin(r = .3, l = .3, unit = "pt"), ),
-    axis.title = element_blank(),
-    axis.text.x = element_text(angle = 90, hjust = 1),
-    legend.position = "bottom"
+      # ---- Main stacked bars ----
+      geom_col(aes(fill = clade_name), width = .9, position = "stack") +
+      # geom_text(aes(label = value), position = position_stack(vjust = 0.5)) +
+      scale_fill_manual(values = col_pal) + # pal[1:colourCount]
+      guides(
+        fill = guide_legend(
+          override.aes = list(size = 2),
+          ncol = 4,
+          byrow = FALSE,
+          keyheight = .4,
+          keywidth = .6
+        )
+      ) +
+      theme_classic() +
+      coord_cartesian(expand = F) +
+      theme(
+        plot.margin = unit(c(1, 0.5, 1, 0), "cm"),
+        legend.spacing.y = unit(.5, 'cm'),
+        legend.title = element_blank(),
+        legend.text = element_text(
+          margin = margin(r = .3, l = .3, unit = "pt"),
+        ),
+        axis.title = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = "bottom"
+      ) +
+      facet_wrap(~RVVC_pos, nrow = 1, scales = "free_x", ) +
+      theme(panel.spacing.x = unit(0.1, "lines"), legend.position = "none")
   )
 
-plot(barplot)
+# plot(barplot)
+
+panel_widths <- annot_bar %>% summarise(n_samples = n(), .by = "RVVC_pos")
+
+plot_grid(
+  plotlist = barplot,
+  nrow = 2,
+  align = "h",
+  rel_widths = c(31, 13, 30, 50)
+)
+
+plot(lgd)
 ```
 
 ## Step 5: Centered Log Ratio (CLR) Transformation
@@ -868,6 +912,9 @@ matrix %>%
 ```{r get-new-groups}
 gr <- tibble(ID = colnames(data)[-c(1, 2)]) %>%
   left_join(., gr_data, by = c("ID" = "svamp_ID"))
+
+# gr <- tibble(sample = colnames(data)[-c(1, 2)]) %>%
+#   left_join(., meta_gr, by = "sample")
 ```
 
 
