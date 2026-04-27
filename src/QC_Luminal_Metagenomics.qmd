@@ -764,78 +764,74 @@ barplot <- df_long_ %>%
   left_join(., select(meta_gr, sample, RVVC_pos), by = "sample") %>%
   mutate(sample = factor(sample, levels = sample_order)) %>%
   #mutate(sample = factor(sample, levels = annot_bar$sample)) %>%
-  split(~RVVC_pos) %>%
-  map2(
+  ggplot(
     .,
-    split(annot_bar, ~RVVC_pos),
-    ~ .x %>%
-      ggplot(
-        .,
-        aes(x = .data[["sample"]], y = abundance) # round(value, digits = 3)
-      ) +
+    aes(x = .data[["sample"]], y = abundance) # round(value, digits = 3)
+  ) +
 
-      # ---- Annotation bar at x = -0.5 ----
-      geom_tile(
-        data = .y,
-        aes(x = sample, y = 100.7, fill = RVVC_pos),
-        inherit.aes = FALSE,
-        height = 0.9, #
-        #width = 0.9
-      ) +
-      scale_fill_manual(values = RVVC_pal) +
-      guides(
-        fill = guide_legend(
-          override.aes = list(size = 2),
-          ncol = 1,
-          byrow = T,
-          keyheight = .4,
-          keywidth = .6
-        )
-      ) +
-      new_scale_fill() +
+  # ---- Annotation bar at x = -0.5 ----
+  geom_tile(
+    aes(x = sample, y = 100.7, fill = RVVC_pos),
+    inherit.aes = FALSE,
+    height = 0.9, #
+    #width = 0.9
+  ) +
+  scale_fill_manual(values = RVVC_pal) +
+  guides(
+    fill = guide_legend(
+      override.aes = list(size = 2),
+      ncol = 1,
+      byrow = T,
+      keyheight = .4,
+      keywidth = .6
+    )
+  ) +
+  new_scale_fill() +
 
-      # ---- Main stacked bars ----
-      geom_col(aes(fill = clade_name), width = .9, position = "stack") +
-      # geom_text(aes(label = value), position = position_stack(vjust = 0.5)) +
-      scale_fill_manual(values = col_pal) + # pal[1:colourCount]
-      guides(
-        fill = guide_legend(
-          override.aes = list(size = 2),
-          ncol = 4,
-          byrow = FALSE,
-          keyheight = .4,
-          keywidth = .6
-        )
-      ) +
-      theme_classic() +
-      coord_cartesian(expand = F) +
-      theme(
-        plot.margin = unit(c(1, 0.5, 1, 0), "cm"),
-        legend.spacing.y = unit(.5, 'cm'),
-        legend.title = element_blank(),
-        legend.text = element_text(
-          margin = margin(r = .3, l = .3, unit = "pt"),
-        ),
-        axis.title = element_blank(),
-        axis.text.x = element_text(angle = 90, hjust = 1),
-        legend.position = "bottom"
-      ) +
-      facet_wrap(~RVVC_pos, nrow = 1, scales = "free_x", ) +
-      theme(panel.spacing.x = unit(0.1, "lines"), legend.position = "none")
-  )
+  # ---- Main stacked bars ----
+  geom_col(aes(fill = clade_name), width = .9, position = "stack") +
+  # geom_text(aes(label = value), position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = col_pal) + # pal[1:colourCount]
+  guides(
+    fill = guide_legend(
+      override.aes = list(size = 2),
+      ncol = 4,
+      byrow = FALSE,
+      keyheight = .4,
+      keywidth = .6
+    )
+  ) +
+  theme_classic() +
+  coord_cartesian(expand = F) +
+  theme(
+    plot.margin = unit(c(1, 0.5, 1, 0), "cm"),
+    legend.spacing.y = unit(.5, 'cm'),
+    legend.title = element_blank(),
+    legend.text = element_text(
+      margin = margin(r = .3, l = .3, unit = "pt"),
+    ),
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.position = "bottom"
+  ) +
+  # facet_wrap(~RVVC_pos, nrow = 1, scales = "free_x" ) +
+  # space gives equal width of bars across facets:
+  facet_grid(cols = vars(RVVC_pos), scales = "free_x", space = "free_x") +
+  theme(panel.spacing.x = unit(0.1, "lines"), legend.position = "bottom")
 
-# plot(barplot)
 
-panel_widths <- annot_bar %>% summarise(n_samples = n(), .by = "RVVC_pos")
+plot(barplot)
 
-plot_grid(
-  plotlist = barplot,
-  nrow = 2,
-  align = "h",
-  rel_widths = c(31, 13, 30, 50)
-)
+# panel_widths <- annot_bar %>% summarise(n_samples = n(), .by = "RVVC_pos")
 
-plot(lgd)
+# plot_grid(
+#   plotlist = barplot,
+#   nrow = 2,
+#   align = "h",
+#   rel_widths = c(31, 13, 30, 50)
+# )
+
+# plot(lgd)
 ```
 
 ## Step 5: Centered Log Ratio (CLR) Transformation
