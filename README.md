@@ -41,8 +41,8 @@ This repository will bring together multiple omics layers generated from the sam
 3. [FS-Transcriptome](https://vildeka.github.io/Candida-omics/Feature_selection_Transcriptomics)
 
 ### Unsupervised Factor Analysis (MOFA)
-1. [MOFA](https://vildeka.github.io/Candida-omics/01_MOFA)
-
+1. [01_MOFA](https://vildeka.github.io/Candida-omics/01_MOFA)
+2. [02_MOFA](https://vildeka.github.io/Candida-omics/02_Functional_Enrichment)
 
 ### Supervised sPLS-DA Analysis (DIABLO)
 1. [sPLS-DA-Metagenome](https://vildeka.github.io/Candida-omics/Feature_selection_Metagenomics)
