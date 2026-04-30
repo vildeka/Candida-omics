@@ -224,6 +224,14 @@ gg_color_hue <- function(n) {
 gg_color_hue(4)
 ```
 
+```{r helper-function}
+clean_GO.fun <- function(path) {
+  str_replace_all(path, "_", " ") %>%
+    str_remove(., "^GOBP ") %>%
+    str_to_lower(.)
+}
+```
+
 ## 2. Data loading
 Multi‑omics matrices and sample metadata are loaded from pre‑processed RDS/CSV files. These data have already undergone quality control and normalisation upstream.
 ```{r load_data}
@@ -619,31 +627,30 @@ enrich.both <-
   )
 ```
 
-```{r save-GSEA-results}
-#| code-fold: true
-#| output: false
-# ============================================================
-# Save enrichment RDS objects
-# ============================================================
-enrichment_list <- list(pos = enrich.pos, neg = enrich.neg, both = enrich.both)
-imap(
-  enrichment_list,
-  ~ saveRDS(.x, paste0("../Results/Enrichment/", "GSEA_", .y, ".RDS"))
-)
-# enrichment_list <- map(c("pos", "neg", "both") %>% set_names(),
-#   ~ readRDS(paste0("../Results/Enrichment/", "GSEA_", .x, ".RDS")))
+```{r get-gene-number-per-pathway}
+# add gene information to suppl tables
+get_genes.fun <- function(enrich_object) {
+  phtw_genes <- enrich_object[["feature.sets"]] %>%
+    # enrichment_list$neg$GO[["feature.sets"]] %>%
+    as_tibble(rownames = "pathway") %>%
+    pivot_longer(-pathway, names_to = "genes") %>%
+    filter(value == 1) %>%
+    summarise(
+      n_genes = n(),
+      gene_list = list(genes),
+      .by = c("pathway")
+    )
+}
 
-# ============================================================
-# Save Pathway level information
-# ============================================================
+# assemble suppl tables
 enrichment_to_tibble <- function(
   enrichment_obj,
   keep_slots = c("pval", "pval.adj", "set.statistics")
 ) {
-  enrichment_obj %>%
+  temp <- enrichment_obj %>%
     imap(
       .,
-      ~ .x %>% # enrich.neg$GO %>%
+      ~ .x %>% # enrichment_list$neg$GO %>%
         enframe(.) %>%
         filter(name %in% keep_slots) %>%
         mutate(data = map(value, ~ as_tibble(.x, rownames = "pathway"))) %>%
@@ -663,8 +670,33 @@ enrichment_to_tibble <- function(
         arrange(across(starts_with("pval_"), ~.x)) %>%
         mutate(source = .y)
     )
+  if ("pval" %in% keep_slots) {
+    temp <- imap(
+      temp,
+      ~ left_join(.x, get_genes.fun(enrichment_obj[[.y]]), by = "pathway")
+    )
+  }
+  return(temp)
 }
+```
 
+```{r save-GSEA-results}
+#| code-fold: true
+#| output: false
+# ============================================================
+# Save enrichment RDS objects
+# ============================================================
+enrichment_list <- list(pos = enrich.pos, neg = enrich.neg, both = enrich.both)
+imap(
+  enrichment_list,
+  ~ saveRDS(.x, paste0("../Results/Enrichment/", "GSEA_", .y, ".RDS"))
+)
+# enrichment_list <- map(c("pos", "neg", "both") %>% set_names(),
+#   ~ readRDS(paste0("../Results/Enrichment/", "GSEA_", .x, ".RDS")))
+
+# ============================================================
+# Save Pathway level information
+# ============================================================
 enrichment_list <- list(pos = enrich.pos, neg = enrich.neg, both = enrich.both)
 
 result <- map(enrichment_list, enrichment_to_tibble)
@@ -715,6 +747,11 @@ The enrichment analysis returns a list of 5 elements:
     **sigPathways:** list with significant pathways per factor at a specified FDR threshold
 
 
+- **Important:**  
+  Pathway-level metrics (`set.statistics`, `pval`, `pval.adj`) are pathway-specific. Gene-level values (`feature.sets`, `feature.statistics`) remain the same regardless of pathway membership (calculated before enrichment).
+
+- **set.statistics:**
+   Possible values are set.statistic = c("mean.diff", "rank.sum"). For the default "mean.diff", the reported values can be interpreted as "On average, how strong are the negative/positive scaled MOFA weights of the features belonging to each pathway for the spesific factor"
 
 ```{r}
 plot_enrichment_heatmap(enrich.neg$GO)
@@ -814,6 +851,7 @@ make_gsea_heatmap <- function(
   # Matrix prep
   mat <- temp$feature.sets[sets, , drop = FALSE]
   mat <- mat[, colSums(mat) != 0] # remove cols sum to zero
+  #rownames(mat) <- clean_GO.fun(rownames(mat))
 
   # filter genes
   keep_genes <- temp$feature.statistics[colnames(mat), "Factor1"] >
@@ -829,7 +867,7 @@ make_gsea_heatmap <- function(
   base_height = 2 # border height
   per_pathway = 0.1 # height per row
   max_height = 35 # cap height
-  height <- min(max_height, base_height + nrow(mat) * per_pathway)
+  height <<- min(max_height, base_height + nrow(mat) * per_pathway)
 
   # Annotations
   row_ha <- rowAnnotation(
@@ -859,6 +897,7 @@ make_gsea_heatmap <- function(
   # Heatmap
   H <- Heatmap(
     mat,
+    row_labels = clean_GO.fun(rownames(mat)),
     width = unit(ncol(mat) * cell_width, "mm"),
     name = "Present",
     col = col_fun,
@@ -910,6 +949,8 @@ these are simply set to weight = 0 in the MOFA enrichment function, but retained
 the default mean.diff represents the difference in the average weight between foreground and background genes
 
 ```{r plot-heatmap}
+#| fig.width: 12
+#| fig.height: 9.6
 ht_list_neg <- make_gsea_heatmap(
   enrich.neg,
   gene_col = "neg",
@@ -1032,12 +1073,13 @@ p.val_round <- function(p.val) {
 plot_weights_pathways <- function(
   enrichment_object,
   weights_df,
-  enrich_results = results$neg$GO,
+  enrich_results = results$neg,
   phtw,
   n_label = 10,
   x_axis = "weight" # or use "scaled_weight" for scaled MOFA loadings values
 ) {
   temp_df <- enrichment_object$feature.sets %>%
+    # enrichment_list$neg$GO$feature.sets %>%
     as_tibble(rownames = "pathway") %>%
     pivot_longer(-pathway, names_to = "genes") %>%
     filter(value == 1) %>%
@@ -1150,7 +1192,9 @@ weights <- get_weights(MOFAmodel, as.data.frame = TRUE) %>%
 # ============================================================
 # Get pathways to plot
 # ============================================================
-phtw <- enrichment_list$neg$GO$sigPathways[[1]] %>%
+phtw <- results$neg %>%
+  filter(pval.adj_Factor1 <= 0.05) %>%
+  pull(., "pathway") %>%
   split(., ceiling(seq_along(.) / 5))
 
 # ============================================================
@@ -1184,8 +1228,12 @@ ggsave(
 # ============================================================
 # plot pos weights
 # ============================================================
-# phtw <- enrich.pos$GO$sigPathways[[1]] %>% split(., ceiling(seq_along(.) / 5))
-phtw <- rownames(ht_list_pos$matrix) %>% split(., ceiling(seq_along(.) / 5))
+phtw <- results$pos %>%
+  filter(set.statistics_Factor1 >= 9) %>%
+  pull(., "pathway") %>%
+  split(., ceiling(seq_along(.) / 5))
+# phtw <- ht_list_pos$hclust$labels[hclust$order] %>%
+#   split(., ceiling(seq_along(.) / 5))
 
 plt_list <- map(
   phtw,
@@ -1367,23 +1415,8 @@ plot_enrichment_detailed(
 )
 
 # my function
-plot_top_weights_tidy(weights)
+plot_top_weights_tidy(weights, nfeatures = 35)
 ```
-
-
-
-### Difference between MOFA weights and enrichment feature statistics
-
-- **MOFA weights (`get_weights`)** are gene-level values learned by the model.  
-  They represent how strongly each gene contributes to a latent factor, with the sign indicating direction (positive vs negative association) and the magnitude indicating importance.
-
-- **Enrichment feature statistics (`feature.statistics` from `run_enrichment`)** are also gene-level values, but they are derived from the MOFA weights and may be filtered or transformed (e.g. by sign or scaling). They are not recalculated per pathway.
-
-- **Key distinction:**  
-  MOFA weights describe the **global contribution of each gene to a factor**, whereas enrichment results use those weights to test whether a **set of genes (pathway)** is biased toward high or low values.
-
-- **Important:**  
-  Pathway-level metrics (`set.statistics`, `pval`, `pval.adj`) are the only quantities that are truly pathway-specific. Gene-level values remain the same regardless of pathway membership.
 
 
 ## 10. Plot waffle
@@ -1572,6 +1605,7 @@ plot_genes_by_clus <- function(
   weights_df,
   nfeatures = NULL,
   fact = 1,
+  facet_type = "wrap",
   abs = TRUE,
   order = NULL,
   sign = "all"
@@ -1609,7 +1643,15 @@ plot_genes_by_clus <- function(
       mutate(genes = factor(genes, levels = unique(genes)))
   }
   W <<- W
-  gr <- unique(W$clus)
+
+  facet_layer <- if (facet_type == "grid") {
+    # One shared x-axis across clusters
+    facet_grid(rows = vars(clus), scales = "free_y", space = "free_y")
+  } else {
+    # Separate x-axis per cluster
+    facet_wrap(~clus, ncol = 1, scales = "free", space = "free_y")
+  }
+
   # Plot
   p <- ggplot(W, aes(x = scaled_weight, y = genes, color = clus)) +
     geom_point(aes(size = value), show.legend = F) + # size = 2
@@ -1619,7 +1661,7 @@ plot_genes_by_clus <- function(
       show.legend = F
     ) +
     scale_colour_manual(values = pal2[["gene_clus"]], na.value = "gray") +
-    #coord_flip() +
+    coord_cartesian(clip = "off") +
     labs(y = "Weight", x = NULL) +
     theme_minimal(base_size = 8) +
     theme(
@@ -1637,8 +1679,9 @@ plot_genes_by_clus <- function(
       legend.position = "top",
       panel.grid.major.y = element_blank(),
     ) +
+    facet_layer +
     #facet_grid(rows = vars(clus), scales = "free", space = "free_y") + # one x-axis only
-    facet_wrap(~clus, ncol = 1, scales = "free", space = "free_y") + # x-axis per facet
+    #facet_wrap(~clus, ncol = 1, scales = "free", space = "free_y") + # x-axis per facet
     xlim(0, 1 + 0.1) +
     geom_text(
       aes(label = sign_label),
@@ -1714,13 +1757,33 @@ sig_pthw <- results$neg %>%
 
 # enrichment_list$neg$GO$feature.sets and enrichment_list$pos$GO$feature.sets
 # are identical
+split_pthw.fun <- function(df) {
+  df %>%
+    mutate(., n_genes = n(), .by = "pathway") %>%
+    mutate(
+      .,
+      split_label = case_when(
+        n_genes > 130 & str_detect(clus, "pos") ~ "pos",
+        n_genes > 130 & str_detect(clus, "neg") ~ "neg",
+        n_genes > 130 & is.na(clus) ~ "neg",
+        n_genes <= 130 ~ "all",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    select(-n_genes)
+}
 
 phtw_genes <- enrichment_list$neg$GO$feature.sets %>%
   as_tibble(rownames = "pathway") %>%
   pivot_longer(-pathway, names_to = "genes") %>%
   filter(value == 1) %>%
-  group_by(pathway) %>%
-  summarise(genes = list(genes)) %>%
+  mutate(clus = groups[.$genes]) %>%
+  split_pthw.fun() %>%
+  summarise(
+    genes = list(genes),
+    n_clus = n_distinct(clus, na.rm = F) - 1,
+    .by = c("pathway", "split_label")
+  ) %>%
   filter(pathway %in% sig_pthw$pathway)
 
 # filter out genes based on scaled weight treshold
@@ -1732,18 +1795,26 @@ summary(filt_wght$weight)
 
 plot_lst <- phtw_genes %>%
   mutate(
-    match = pmap(., ~ intersect(filt_wght$genes, ..2)),
+    match = pmap(., ~ intersect(filt_wght$genes, ..3)),
     plots = pmap(
       .,
-      ~ plot_genes_by_clus(filter(filt_wght, genes %in% ..2), order = T)
+      ~ plot_genes_by_clus(
+        filter(filt_wght, genes %in% ..3),
+        order = T,
+        facet_type = "grid"
+      )
     ),
     plots = map2(pathway, plots, ~ .y + ggtitle(.x))
   ) %>%
-  mutate(height = pmap_chr(., ~ (0.08 * length(..3)) + 2))
+  mutate(height = pmap_chr(., ~ (0.09 * length(..5)) + 0.1 * ..4 + 0.6))
 plot_lst
 
-# quartz(width = 4, height = (0.1 * 10) + 2, dpi = 150) # 1.5
-# plot_lst$plots[[9]]
+# quartz(width = 4, height = (0.09 * 110) + 0.1*10+0.6, dpi = 150) # 1.5
+# plot_lst$plots[[2]]
+# quartz(width = 4, height = (0.09 * 26) + 0.1*6+0.6, dpi = 150) # 1.5
+# plot_lst$plots[[5]]
+# quartz(width = 4, height = (0.09 * 10) + 0.1*3+0.6, dpi = 150) # 1.5
+# plot_lst$plots[[27]]
 # ============================================================
 # Manually write a multi-page PDF
 # ============================================================
@@ -1770,9 +1841,9 @@ walk2(
 )
 dev.off()
 
-
+# quartz(width = 4, height = (0.09 * 10) + 0.1*3+0.6, dpi = 150) # 1.5
 plot_genes_by_clus(
-  filter(weights_df, genes %in% phtw_genes$genes[[2]]),
+  filter(weights_df, genes %in% phtw_genes$genes[[28]]),
   order = TRUE
 )
 ```
