@@ -1040,11 +1040,42 @@ gene_enrich <- c("pos", "neg", "both") %>%
 # Get gene groups (clus)
 # ============================================================
 group_df <- read_csv("../Results/Enrichment/Genes_clust.csv")
+groups <- set_names(group_df$clus, group_df$genes)
+```
+
+```{r get-weights}
+# ============================================================
+# Get gene weights
+# ============================================================
+
+gene_df <- bind_rows(gene_enrich[1:2], .id = "sign") %>%
+  as_tibble() %>%
+  select(genes = "pathway", sign, scaled_weight = feature.statistics_Factor1)
+
+# I think code above is unnessecary to save from run_enrichment() and join to other data
+# instead it would be simply sufficient to: group_by(.data[[facet]]) %>% mutate(scaled_weight = weight / max(abs(weight)))
+# its important that its grouped by "factor" and/or "view" to be correct
+# keep for now, should replace later to simplify
+
+weights_df <- get_weights(
+  MOFAmodel,
+  as.data.frame = TRUE,
+  views = "Transcriptomics"
+) %>%
+  as_tibble() %>%
+  rename(genes = "feature", weight = "value") %>%
+  filter(factor == "Factor1") %>%
+  #filter(factor == "Factor1") %>% pull(feature) %>% unique()
+
+  arrange(factor, desc(abs(weight))) %>%
+  left_join(., gene_df, by = "genes") %>%
+  left_join(., group_df, by = "genes") %>%
+  filter(scaled_weight != 0)
 ```
 
 ## 9. Plot raw weights per pathway
 
-```{r plot-pathway-indvidualy}
+```{r plot-pathway-indvidualy-function}
 #| code-fold: true
 # 1. Filters weights_df to keep only genes from Factor1
 # 2. Extracts gene-level enrichment values from enrichment_object
@@ -1086,6 +1117,7 @@ plot_weights_pathways <- function(
     mutate(Ngenes = n(), .by = "pathway") %>%
     left_join(., weights_df, by = "genes") %>%
     left_join(., enrich_results, by = "pathway") %>%
+    #left_join(., dplyr::select(enrich_results, pathway, contains(c("pval","set.statistics"))), by = "pathway") %>%
     arrange(pval.adj_Factor1)
 
   temp_df <<- temp_df
@@ -1127,7 +1159,14 @@ plot_weights_pathways <- function(
       scale = "count",
       adjust = 0.5
     ) +
-    geom_point(data = df %>% filter(!top), color = "grey70", size = 0.5, ) +
+    #geom_point(data = df %>% filter(!top), color = "grey70", size = 0.5 ) +
+    geom_point(
+      data = df %>% filter(!top),
+      aes(fill = clus, color = clus),
+      shape = 21,
+      show.legend = F,
+      size = 0.5
+    ) +
 
     geom_jitter(
       aes(fill = clus),
@@ -1146,10 +1185,14 @@ plot_weights_pathways <- function(
       point.size = 0.1,
       hjust = 0.2,
       vjust = 0,
-      size = 1,
+      size = 1.5,
       position = position
     ) +
-    scale_fill_manual(values = pal2$gene_clus, na.value = "black") +
+    scale_fill_manual(
+      values = pal2$gene_clus,
+      na.value = "grey70",
+      aesthetics = c("colour", "fill")
+    ) +
     labs(x = "Weight", y = NULL) +
 
     theme_bw(base_size = 11 / .pt) +
@@ -1159,36 +1202,19 @@ plot_weights_pathways <- function(
       axis.text.y = element_blank() #element_text(size = 10)
     ) +
     {
-      if (grepl("scaled_weight", x_axis)) xlim(c(0, 1.1))
+      if (grepl("scaled_weight", x_axis)) {
+        xlim(c(0, 1.1))
+      } else {
+        xlim(c(-max(df$weight), max(df$weight) + 0.1))
+      }
     } +
     facet_wrap(~pathway, ncol = 1, scales = "free")
 }
 ```
 
 
-```{r plot-indvidual-pathways}
-# ============================================================
-# Get scaled weights
-# ============================================================
-gene_df <- bind_rows(gene_enrich[1:2], .id = "sign") %>%
-  as_tibble() %>%
-  select(genes = "pathway", scaled_weight = feature.statistics_Factor1) %>%
-  filter(scaled_weight != 0)
-# ============================================================
-# Get weights and gene groups (clus)
-# ============================================================
-groups <- set_names(group_df$clus, group_df$genes)
-
-weights <- get_weights(MOFAmodel, as.data.frame = TRUE) %>%
-  as_tibble() %>%
-  filter(view == "Transcriptomics") %>%
-  rename(genes = "feature", weight = "value") %>%
-  #filter(factor == "Factor1") %>% pull(feature) %>% unique()
-  arrange(factor, desc(abs(weight))) %>%
-  mutate(clus = ifelse(factor == "Factor1", groups[.$genes], NA)) %>%
-  filter(factor == "Factor1") %>%
-  left_join(., gene_df, by = "genes")
-
+```{r plot-many-indvidual-pathways}
+#| fig.width: 4
 # ============================================================
 # Get pathways to plot
 # ============================================================
@@ -1204,7 +1230,7 @@ plt_list <- map(
   phtw,
   ~ plot_weights_pathways(
     enrichment_list$neg$GO,
-    weights_df = weights,
+    weights_df = weights_df,
     x_axis = "weight",
     enrich_results = results$neg,
     phtw = .x
@@ -1239,7 +1265,7 @@ plt_list <- map(
   phtw,
   ~ plot_weights_pathways(
     enrichment_list$pos$GO,
-    weights_df = weights,
+    weights_df = weights_df,
     x_axis = "weight",
     enrich_results = results$pos,
     phtw = .x
@@ -1260,9 +1286,9 @@ ggsave(
 )
 ```
 
-```{r figure-x}
+```{r figure-x-neg}
 #| fig.width: 4
-#| fig.height: 7
+#| fig.height: 4
 phtw <- c(
   "GOBP_LIPID_METABOLIC_PROCESS",
   "GOBP_FATTY_ACID_METABOLIC_PROCESS",
@@ -1270,11 +1296,12 @@ phtw <- c(
   "GOBP_ICOSANOID_METABOLIC_PROCESS"
 )
 
+# quartz(width = 4, height = 1*length(phtw) )
 plot <- plot_weights_pathways(
-  enrich.neg$GO,
-  weights_df = weights,
+  enrichment_list$neg$GO,
+  weights_df = weights_df,
   x_axis = "weight",
-  enrich_results = result$neg$GO,
+  enrich_results = results$neg,
   phtw = phtw,
   n_label = 10
 )
@@ -1285,7 +1312,11 @@ ggsave(
   width = 4
 )
 plot
+```
 
+```{r figure-x-pos}
+#| fig.width: 4
+#| fig.height: 7
 phtw <- c(
   "GOBP_NEUTROPHIL_MIGRATION",
   "GOBP_NEUTROPHIL_CHEMOTAXIS",
@@ -1299,9 +1330,9 @@ phtw <- c(
 
 plot <- plot_weights_pathways(
   enrich.pos$GO,
-  weights_df = weights,
+  weights_df = weights_df,
   x_axis = "weight",
-  enrich_results = result$pos$GO,
+  enrich_results = results$pos,
   phtw = phtw,
   n_label = 10
 )
@@ -1321,8 +1352,10 @@ plot
 #| code-fold: true
 plot_top_weights_tidy <- function(
   weights_df,
+  facet = "view", # "factor" or "view"
   nfeatures = 10,
   fact = 1,
+  scale = TRUE,
   abs = TRUE,
   sign = "all"
 ) {
@@ -1331,6 +1364,12 @@ plot_top_weights_tidy <- function(
 
   W <- W %>%
     filter(grepl(paste0("^Factor", fact, "$", collapse = "|"), .$factor))
+
+  if (scale) {
+    W <- W %>%
+      group_by(.data[[facet]]) %>%
+      mutate(weight = weight / max(abs(weight)))
+  }
 
   # Sign
   W <- W %>%
@@ -1348,7 +1387,7 @@ plot_top_weights_tidy <- function(
 
   # Select top genes per factor
   W <- W %>%
-    group_by(factor) %>%
+    group_by(.data[[facet]]) %>%
     slice_max(order_by = weight, n = nfeatures) %>%
     #arrange(weight) %>%
     #fct_reorder(genes, weight) %>%
@@ -1361,25 +1400,25 @@ plot_top_weights_tidy <- function(
     mutate(genes_id = factor(genes, levels = unique(genes)))
   #mutate(genes_id = factor(genes, levels = rev(unique(genes))))
 
-  gr <- unique(W$clus)
   # Plot
-  p <- ggplot(W, aes(x = genes_id, y = weight, color = clus)) +
+  p <- ggplot(W, aes(x = genes_id, y = weight, color = sign_label)) + # , color = clus
     geom_point(size = 2) +
     geom_segment(
       aes(xend = genes_id, yend = 0),
       linewidth = 0.75,
       show.legend = F
     ) +
-    scale_colour_manual(values = pal2[["gene_clus"]], na.value = "gray") +
+    #scale_colour_manual(values = pal2[["gene_clus"]], na.value = "gray") +
+    scale_colour_manual(values = c("#6388B4FF", "#EF6F6AFF")) +
     coord_flip() +
     labs(y = "Weight", x = NULL) +
     theme_bw() +
     theme(
       axis.text.y = element_text(size = rel(1.1)),
       panel.grid.major.y = element_blank(),
-      legend.position = "top"
+      legend.position = "none"
     ) +
-    facet_wrap(~factor, nrow = 1, scales = "free")
+    facet_wrap(as.formula(paste("~", facet)), ncol = 2, scales = "free")
 
   if (abs) {
     p <- p +
@@ -1397,6 +1436,8 @@ plot_top_weights_tidy <- function(
 ```
 
 ```{r plot-weights-MOFA-functions}
+#| fig.width: 11
+#| fig.height: 8
 # MOFA functions:
 plot_enrichment(enrich.neg$GO, factor = 1, max.pathways = 35)
 
@@ -1414,8 +1455,18 @@ plot_enrichment_detailed(
   max.pathways = 3
 )
 
+# quartz(width = 8, height = 8)
+lvl <- c("Transcriptomics", "Functional", "Metabolomics", "Metagenomics")
 # my function
-plot_top_weights_tidy(weights, nfeatures = 35)
+get_weights(
+  MOFAmodel,
+  as.data.frame = TRUE,
+) %>%
+  as_tibble() %>%
+  rename(genes = "feature", weight = "value") %>%
+  filter(factor == "Factor1") %>%
+  mutate(view = factor(.$view, levels = lvl)) %>%
+  plot_top_weights_tidy(., facet = "view", nfeatures = 15)
 ```
 
 
@@ -1464,6 +1515,7 @@ make_gene_waffle_plot <- function(
   # ------------------------------------------------------------
 
   df <- enrich_obj[[ontology]]$feature.sets %>%
+    #df<- enrichment_list$neg$GO$feature.sets %>%
     as_tibble(rownames = "pathway") %>%
     pivot_longer(
       -pathway,
@@ -1481,7 +1533,9 @@ make_gene_waffle_plot <- function(
       by = "pathway"
     ) %>%
     filter(pathway %in% phtw) %>%
-    arrange(clus) %>%
+    #arrange(match(pathway, phtw)) %>%
+
+    mutate(pathway_id = factor(pathway, levels = phtw)) %>%
     mutate(pathway = clean_GO.fun(pathway)) %>%
     mutate(
       pathway = paste0(
@@ -1494,8 +1548,14 @@ make_gene_waffle_plot <- function(
         p.val_round(.$pval.adj_Factor1),
         ")"
       )
-    )
+    ) %>%
+    arrange(clus)
 
+  label_map <- df %>%
+    distinct(pathway_id, pathway) %>%
+    tibble::deframe()
+
+  temp <<- df
   # ------------------------------------------------------------
   # STEP 2: Create waffle plot
   # ------------------------------------------------------------
@@ -1507,7 +1567,11 @@ make_gene_waffle_plot <- function(
       values = pal[["gene_clus"]],
       na.value = "gray"
     ) +
-    facet_wrap(~pathway, ncol = 1) +
+    facet_wrap(
+      ~pathway_id,
+      ncol = 1,
+      labeller = labeller(pathway_id = label_map)
+    ) +
     theme(
       #plot.title.position = "plot", strip.text =
       strip.text = element_text(hjust = 0.1)
@@ -1697,30 +1761,10 @@ plot_genes_by_clus <- function(
 ```{r plot-genes-per-enrich-clust}
 #| fig.width: 4
 #| fig.height: 45
-gene_df <- bind_rows(gene_enrich[1:2], .id = "sign") %>%
-  as_tibble() %>%
-  select(genes = "pathway", sign, scaled_weight = feature.statistics_Factor1)
-
-weights_df <- get_weights(
-  MOFAmodel,
-  as.data.frame = TRUE,
-  views = "Transcriptomics"
-) %>%
-  as_tibble() %>%
-  filter(factor == "Factor1") %>%
-  #filter(factor == "Factor1") %>% pull(feature) %>% unique()
-  rename(genes = "feature", weight = "value") %>%
-  arrange(factor, desc(abs(weight))) %>%
-  left_join(., gene_df, by = "genes") %>%
-  left_join(., group_df, by = "genes") %>%
-  filter(scaled_weight != 0) %>%
-  # mutate(n = n(), .by="genes") %>%
-  # arrange(desc(n))
-
-  filter(scaled_weight > 0.1)
-
 # quartz(width = 4, height = (0.1 * nrow(weights_df)) + 2, dpi = 150) # 1.5
-p_df <- weights_df %>% split(~sign)
+p_df <- weights_df %>%
+  filter(scaled_weight > 0.1) %>%
+  split(~sign)
 p_list <- map(p_df, ~ plot_genes_by_clus(.x))
 
 
@@ -1748,8 +1792,9 @@ p_list$neg
 ## 11. Plot genes per pathway
 
 I think I should set a threshold for scaled weight to include and specify that in the legend of the figure
-```{r genes-per-pathway}
+```{r genes-per-pathway-neg}
 #| message: false
+#| eval: false
 sig_pthw <- results$neg %>%
   #bind_rows(results[1:2], .id = "sign") %>%
   filter(pval.adj_Factor1 < 0.01) %>%
@@ -1784,6 +1829,7 @@ phtw_genes <- enrichment_list$neg$GO$feature.sets %>%
     n_clus = n_distinct(clus, na.rm = F) - 1,
     .by = c("pathway", "split_label")
   ) %>%
+  left_join(., results$neg, by = "pathway") %>%
   filter(pathway %in% sig_pthw$pathway)
 
 # filter out genes based on scaled weight treshold
@@ -1846,4 +1892,160 @@ plot_genes_by_clus(
   filter(weights_df, genes %in% phtw_genes$genes[[28]]),
   order = TRUE
 )
+```
+
+```{r genes-per-pathway-pos}
+#| message: false
+sig_pthw <- list()
+sig_pthw$neg <- results$neg %>%
+  #bind_rows(results[1:2], .id = "sign") %>%
+  filter(pval.adj_Factor1 < 0.01) %>%
+  filter(set.statistics_Factor1 > 2) %>%
+  pull(., "pathway")
+
+sig_pthw$pos <- c(
+  "GOBP_GRANULOCYTE_CHEMOTAXIS",
+  "GOBP_RESPONSE_TO_BACTERIUM",
+  "GOBP_ANTIGEN_RECEPTOR_MEDIATED_SIGNALING_PATHWAY",
+  "GOBP_POSITIVE_REGULATION_OF_RESPONSE_TO_BIOTIC_STIMULUS",
+  "GOBP_POSITIVE_REGULATION_OF_LEUKOCYTE_CELL_CELL_ADHESION",
+  "GOBP_CELL_ACTIVATION_INVOLVED_IN_IMMUNE_RESPONSE",
+  "GOBP_CYTOKINE_MEDIATED_SIGNALING_PATHWAY"
+)
+
+# enrichment_list$neg$GO$feature.sets and enrichment_list$pos$GO$feature.sets
+# are identical
+split_pthw.fun <- function(df) {
+  df %>%
+    mutate(., n_genes = n(), .by = "pathway") %>%
+    mutate(
+      .,
+      split_label = case_when(
+        n_genes > 130 & str_detect(clus, "pos") ~ "pos",
+        n_genes > 130 & str_detect(clus, "neg") ~ "neg",
+        n_genes > 130 & is.na(clus) ~ "neg",
+        n_genes <= 130 ~ "all",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    select(-n_genes)
+}
+
+phtw_genes <- enrichment_list$neg$GO$feature.sets %>%
+  as_tibble(rownames = "pathway") %>%
+  pivot_longer(-pathway, names_to = "genes") %>%
+  filter(value == 1) %>%
+  mutate(clus = groups[.$genes]) %>%
+  split_pthw.fun() %>%
+  summarise(
+    genes = list(genes),
+    n_clus = n_distinct(clus, na.rm = F) - 1,
+    .by = c("pathway", "split_label")
+  )
+
+phtw_genes <- results[1:2] %>%
+  map(., ~ select(.x, pathway, pval.adj_Factor1)) %>%
+  map(., ~ left_join(phtw_genes, .x, by = "pathway")) %>%
+  imap(., ~ filter(.x, pathway %in% sig_pthw[[.y]]))
+
+# filter out genes based on scaled weight treshold
+summary(weights_df$scaled_weight)
+filt_wght <- weights_df %>%
+  filter(scaled_weight >= 0.1)
+
+summary(filt_wght$weight)
+
+plot_lst <- phtw_genes %>%
+  map(
+    .,
+    ~ .x %>% # phtw_genes$pos %>%
+      mutate(
+        match = pmap(., ~ intersect(filt_wght$genes, ..3)),
+        .after = "n_clus"
+      ) %>%
+      mutate(
+        plots = pmap(
+          .,
+          ~ plot_genes_by_clus(
+            filter(filt_wght, genes %in% ..3),
+            order = T,
+            facet_type = "grid"
+          )
+        ),
+        plots = map2(pathway, plots, ~ .y + ggtitle(.x))
+      ) %>%
+      mutate(
+        height = pmap_dbl(
+          .,
+          ~ (0.09 * length(..5)) + 0.1 * ..4 + 0.6
+        )
+      )
+  )
+plot_lst$neg
+
+# quartz(width = 4, height = (0.09 * 110) + 0.1*10+0.6, dpi = 150) # 1.5
+# plot_lst$plots[[2]]
+# quartz(width = 4, height = (0.09 * 26) + 0.1*6+0.6, dpi = 150) # 1.5
+# plot_lst$plots[[5]]
+# quartz(width = 4, height = (0.09 * 10) + 0.1*3+0.6, dpi = 150) # 1.5
+# plot_lst$plots[[27]]
+
+# quartz(width = 4, height = (0.09 * 10) + 0.1*3+0.6, dpi = 150) # 1.5
+plot_genes_by_clus(
+  filter(weights_df, genes %in% phtw_genes$neg$genes[[28]]),
+  order = TRUE
+)
+```
+
+
+```{r save-indiv-phtw-genes}
+# ============================================================
+# Manually write a multi-page PDF
+# ============================================================
+library(grid)
+pdf(
+  file = "../Results/Enrichment/GO_MOFA_weights_scaled_neg.pdf",
+  width = 4, # fixed width
+  height = max(plot_lst$neg$height),
+  onefile = TRUE # multiple pages
+)
+# Loop over plots and print each on its own page
+walk2(
+  plot_lst$neg$plots,
+  plot_lst$neg$height,
+  ~ {
+    grid.newpage() # start a new page
+    pushViewport(
+      viewport(
+        width = unit(1, "npc"),
+        height = unit(.y, "in")
+      )
+    )
+    print(.x, newpage = FALSE)
+  }
+)
+dev.off()
+
+pdf(
+  file = "../Results/Enrichment/GO_MOFA_weights_scaled_pos.pdf",
+  width = 4, # fixed width
+  height = max(plot_lst$pos$height),
+  onefile = TRUE # multiple pages
+)
+# Loop over plots and print each on its own page
+walk2(
+  plot_lst$pos$plots,
+  plot_lst$pos$height,
+  ~ {
+    grid.newpage() # start a new page
+    pushViewport(
+      viewport(
+        width = unit(1, "npc"),
+        height = unit(.y, "in")
+      )
+    )
+    print(.x, newpage = FALSE)
+  }
+)
+dev.off()
 ```
