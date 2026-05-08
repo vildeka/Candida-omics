@@ -35,19 +35,16 @@ This repository will bring together multiple omics layers generated from the sam
 2. [QC-Metabolome](https://vildeka.github.io/Candida-omics/QC_Metabolomics)
 3. [QC-Transcriptome](https://vildeka.github.io/Candida-omics/QC_Transcriptomics)
 
-### PCA and Feature Selection
+### PCA and Feature Selection (single omic sPLS-DA)
 1. [FS-Luminal-Metagenome](https://vildeka.github.io/Candida-omics/Feature_selection_Metagenomics)
 2. [FS-Metabolome](https://vildeka.github.io/Candida-omics/Feature_Selection_Metabolomics)
 3. [FS-Transcriptome](https://vildeka.github.io/Candida-omics/Feature_selection_Transcriptomics)
 
 ### Unsupervised Factor Analysis (MOFA)
-1. [01_MOFA](https://vildeka.github.io/Candida-omics/01_MOFA)
-2. [02_MOFA](https://vildeka.github.io/Candida-omics/02_Functional_Enrichment)
+1. [01_MOFA_model](https://vildeka.github.io/Candida-omics/01_MOFA)
+2. [02_MOFA_GSEA](https://vildeka.github.io/Candida-omics/02_Functional_Enrichment)
 
-### Supervised sPLS-DA Analysis (DIABLO)
-1. [sPLS-DA-Metagenome](https://vildeka.github.io/Candida-omics/Feature_selection_Metagenomics)
-2. [sPLS-DA-Metabolome](https://vildeka.github.io/Candida-omics/Feature_Selection_Metabolomics)
-3. [sPLS-DA-Transcriptome](https://vildeka.github.io/Candida-omics/Feature_selection_Transcriptomics) <br />
+### Supervised block sPLS-DA Analysis (DIABLO)
 1. [01_DIABLO-Prepp](https://vildeka.github.io/Candida-omics/01_DIABLO_prepp)
 2. [02_DIABLO-models](https://vildeka.github.io/Candida-omics/02_DIABLO_models)
 
