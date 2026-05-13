@@ -43,6 +43,7 @@ This repository will bring together multiple omics layers generated from the sam
 ### Unsupervised Factor Analysis (MOFA)
 1. [01_MOFA_model](https://vildeka.github.io/Candida-omics/01_MOFA)
 2. [02_MOFA_GSEA](https://vildeka.github.io/Candida-omics/02_Functional_Enrichment)
+3. [03_MOFA_barplots](https://vildeka.github.io/Candida-omics/03_Omic_barplot_visualization)
 
 ### Supervised block sPLS-DA Analysis (DIABLO)
 1. [01_DIABLO-Prepp](https://vildeka.github.io/Candida-omics/01_DIABLO_prepp)
