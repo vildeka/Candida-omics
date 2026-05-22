@@ -1,6 +1,7 @@
 ---
 title: "Functional Metagenome Quality Control and Normalization"
-date: "`r format(Sys.time(), '%d-%m-%Y')`"
+date: today
+date-format: "D MMM YYYY"
 format:
   html:
     embed-resources: true
