@@ -250,12 +250,12 @@ Use this when working with rows that include taxonomic stratification (`|`).
 ### 2. Unstratified (community-level) normalization
 Use this when working with aggregated (non-stratified) data.
 
-**Include in total sum:**
+##### Include in total sum:
 - `UNMAPPED`
 - `UNINTEGRATED` (single total row)
 - All pathway rows without `|`
 
-**Exclude:**
+##### Exclude:
 - All stratified rows (`|`), including:
   - `UNINTEGRATED|...`
   - `PWY-XXXX|...`
@@ -277,7 +277,7 @@ relative_path <- list(
       mutate(across(where(is.numeric), ~ . / sum(.)))
   )
 
-# check the relative abundance per participant sums to 100
+# check the relative abundance per participant sums to 1
 relative_path %>%
   map(
     ~ .x %>%
@@ -313,8 +313,8 @@ write_csv(
 Note to self: The original code from Margaux did the selection for the community level dataframe correctly. However, I added code to also normalize at the stratified (taxa level), but I did not add the UNMAPPED reads, that should have been included to get the correct percentages. This is fine since I have not used the taxa level data so fare and now it will be corrected. 
 
 **NB!** 
-Sample S10 has Zero abundance at taxa level even though at pathway level it has a a low abundance of pathway:
-PWY-6124: inosine-5'-phosphate biosynthesis II
+Sample S10 has Zero abundance at taxa level even though at pathway level it has a a low abundance of pathway:  
+PWY-6124: inosine-5'-phosphate biosynthesis II  
 PWY-6123: inosine-5'-phosphate biosynthesis I
 
 ## 6. Filter pathways < 0.005% relative abundance in at least 10 samples
@@ -383,6 +383,22 @@ comb_relative_path <- bind_rows(community_lvl, taxa_lvl, .id = "level")
 Summary table low pathways (sum per pathway), set a cut off below 1%
 
 ## 7. CLR transformation
+
+### CLR Transformation: Assumptions and Preprocessing
+
+The centered log-ratio (CLR) transform requires **compositional data**, where each sample contains non-negative values that sum to a constant (e.g. proportions).
+
+##### Before applying CLR:
+- Normalize to proportions (sum = 1 per sample)
+- Filter low-abundance features
+- Remove non-informative features (e.g. `UNMAPPED`, `UNINTEGRATED`)
+- Re-normalize after filtering out non-informative features
+- Handle zeros and missing values:
+  - replace `NA` with 0
+  - use a small pseudocount (e.g. `1e-6`) during transformation
+- Remove all-zero features (rowsum = 0)
+- Ensure no sample has a total of 0 (colsum = 0)
+
 ```{r clr-transform-old}
 #| eval: false
 rel_path_dfs <- list("community_lvl" = comunity_lvl, "taxa_lvl" = taxa_lvl)
@@ -504,8 +520,12 @@ ggplot(df_, aes(y = long, x = .data[["RVVC_pos"]])) +
   geom_point(aes(size = Pct, fill = Avg), col = "gray", shape = 21) + #"#6A2595"
   scale_fill_gradientn(
     colours = col,
-    guide = guide_colorbar(ticks.colour = "black", frame.colour = "black"),
+    guide = guide_colorbar(ticks.colour = "black", frame.colour = "white"),
     name = "Average\nexpression"
+  ) +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
   )
 ```
 
