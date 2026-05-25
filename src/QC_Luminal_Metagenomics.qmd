@@ -478,6 +478,7 @@ gr.fun <- function(df) {
 
   groups <- df %>% # df_long_ %>%
     group_by(sample) %>%
+    arrange(desc(abundance)) %>%
     mutate(gr = clade_name[which.max(abundance)]) %>%
     mutate(gr = str_extract(first(gr), "^\\w+")) %>%
     mutate(
@@ -490,6 +491,14 @@ gr.fun <- function(df) {
       gr = ifelse(
         str_detect(first(clade_name), "iners"),
         "iners",
+        gr
+      )
+    ) %>%
+    mutate(
+      gr = ifelse(
+        gr == "iners" &
+          str_detect(nth(clade_name, n = 2), "crispatus"),
+        "Lactobacillus",
         gr
       )
     ) %>%
@@ -844,6 +853,9 @@ There are two ways of log-ratio transforming the data in mixOmics:
 
 unlike 16S data which are returned as raw counts after pre-processing, shotgun metageome data is often already normalized into proportions. This is because direct counts aren’t very meaningful across different taxa/genomes. That is why we will go with option 2 for our data.
 
+information taken from:
+https://mixomics.org/mixmc/mixmc-preprocessing/
+
 ### Shotgun metagenomics
 
 - You sequence **all DNA** in the sample, not just one marker gene.  
@@ -888,7 +900,10 @@ tax_levels <- c("order", "family", "genus", "species", "strain")
 matrix <- matrix %>%
   # Apply CLR transformation and PCA to each level
   mutate(
-    clr_data = map(data, ~ logratio.transfo(.x, logratio = "CLR", offset = 1))
+    clr_data = map(
+      data,
+      ~ logratio.transfo(.x, logratio = "CLR", offset = 1e-6)
+    )
   ) %>%
   mutate(across(2:3, ~ set_names(.x, paste0(.data[["level"]]))))
 ```
@@ -898,7 +913,7 @@ matrix %>%
   select(1, data, clr_data) %>%
   saveRDS(
     .,
-    "../Results/MixOmic/Metageonome_vagswab_CLR_transformed.RDS"
+    "../Results/MixOmic/Metageonome_vagswab_CLR_transformed_1e-6.RDS"
   )
 # matrix <- read_csv("../Results/MixOmic/Metageonome_vagswab_CLR_transformed.csv")
 ```
