@@ -205,8 +205,9 @@ top_hvg <- read_csv("../Results/Tissue_QC/HVG.csv")
 
 TRX_path <- "../Results/MixOmic/Transcriptomics_batch_filt.csv"
 MG_path <- "../Results/MixOmic/Metageonome_vagswab_CLR_transformed.RDS"
+MG_path <- "../Results/MixOmic/Metageonome_vagswab_CLR_transformed_1e-6.RDS"
 MB_path <- "../Results/MixOmic/Metabolom_Normalized.csv"
-FM_path <- "../Tidy_data/Metagenomics/Functional_annotation_CLR_filtered.RDS"
+FM_path <- "../Tidy_data/Metagenomics/Functional/Functional_annotation_CLR_filtered.RDS"
 
 # expression data
 TRX_batch <- read.csv(TRX_path, row.names = 1)
@@ -228,6 +229,11 @@ new_names <- sub("\\s+\\S+$", "", colnames(MG_matrix)) # remove strain id
 new_names <- make.unique(new_names, sep = " ") # Make names unique
 colnames(MG_matrix) <- new_names # Assign new names
 
+# select pathway id colum
+FM_matrix <- FM_matrix$community_lvl %>%
+  column_to_rownames(., var = "long") %>%
+  select(-short, -taxa)
+
 # select 5000 most higly variable genes
 TRX_HVG <- TRX_batch[top_hvg$gene[1:5000], ]
 
@@ -235,7 +241,7 @@ views <- list(
   Transcriptomics = as.matrix(TRX_HVG),
   Metabolomics = as.matrix(MB_matrix),
   Metagenomics = unclass(t(MG_matrix)),
-  Functional = unclass(FM_matrix$path_lvl)
+  Functional = as.matrix(FM_matrix)
 )
 ```
 
@@ -1045,7 +1051,11 @@ run_mofa_with_seed <- function(seed) {
 
   MOFAmodel <- run_mofa(
     MOFAobject,
-    outfile = paste0("../Results/MOFA/MOFA_allBL_noS84_seed_", seed, ".hdf5"),
+    outfile = paste0(
+      "../Results/MOFA/MOFA_allBL_noS84_1e-6_seed_",
+      seed,
+      ".hdf5"
+    ),
     use_basilisk = TRUE
   )
 
@@ -1060,7 +1070,7 @@ run_mofa_with_seed <- function(seed) {
 
 # existing training code stays the same
 elbo_table <- map_dfr(seeds, ~ run_mofa_with_seed(.x))
-write_csv(elbo_table, "../Results/MOFA/elbo_table_noS84.csv")
+write_csv(elbo_table, "../Results/MOFA/elbo_table_noS84_1e-6.csv")
 best_seed <- elbo_table$seed[which.max(elbo_table$elbo)]
 ```
 
@@ -1107,13 +1117,14 @@ We load the model with the highest elbo score
 #| tbl-colwidths: [60,40]
 elbo_table <- read_csv("../Results/MOFA/elbo_table.csv")
 elbo_table <- read_csv("../Results/MOFA/elbo_table_noS84.csv")
+elbo_table <- read_csv("../Results/MOFA/elbo_table_noS84_1e-6.csv")
 knitr::kable(elbo_table, )
 best_seed <- elbo_table$seed[which.max(abs(elbo_table$elbo))]
 
 MOFAmodel <- load_model(
   #"../Results/MOFA/MOFA_matched_seed_50.hdf5"
   # "../Results/MOFA/MOFA_allBL_seed_"
-  paste0("../Results/MOFA/MOFA_allBL_noS84_seed_", best_seed, ".hdf5")
+  paste0("../Results/MOFA/MOFA_allBL_noS84_1e-6_seed_", best_seed, ".hdf5")
 )
 
 # add meta data to model
@@ -1164,7 +1175,7 @@ samples_metadata(MOFAmodel) <- samples_metadata(MOFAmodel)[, c(
 ```{r view-distribution}
 #| fig-width: 8
 #| fig-height: 6
-# inspect data distribution
+#| # inspect data distribution
 ggdensity(mofa_df, x = "value", fill = "gray70") +
   facet_wrap(~view, nrow = 3, scales = "free") # + xlim(0.5,)
 ```
@@ -1293,10 +1304,11 @@ When running MOFA the first time, the internal quality control warned that at le
 ```{r factors_by_clinical}
 #| fig-width: 10
 #| fig-height: 5
-p <- plot_factors(
+p <- plot_factor(
   MOFAmodel,
   factors = "all",
-  color_by = "Clinical_score_(0-5)"
+  color_by = "Clinical_score_(0-5)",
+  group_by = "Clinical_score_(0-5)"
 ) +
   scale_fill_manual(values = pal$`Clinical_score_(0-5)`, na.value = "white")
 
@@ -1558,6 +1570,7 @@ p <- imap(
       covariates = .x,
       win.asp = 1, # max(6, max(nchar(.x)) * 0.18) / max(3, length(.x) * 0.35) ,
       plot = "r", # use "log_pval" to plot log p-values
+      main = "",
       transpose = T
     )
   )
