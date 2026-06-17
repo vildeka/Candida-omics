@@ -1,0 +1,1795 @@
+---
+title: "Figure 3"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+---
+## 1. Libraries and global settings
+
+```{r libraries}
+#| code-fold: true
+#| output: false
+#| warning: false
+#| message: false
+library(MOFA2)
+library(tidyverse)
+library(jsonlite)
+library(cowplot)
+library(patchwork)
+library(ggExtra)
+# library(openxlsx)
+# library(ggrepel)
+library(RColorBrewer)
+library(ggh4x)
+
+library(ComplexHeatmap)
+library(circlize)
+library(paletteer)
+
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/manuscript")
+
+select <- dplyr::select
+map <- purrr::map
+rename <- dplyr::rename
+```
+
+
+```{r load-data}
+#| output: false
+#| warning: false
+#| message: false
+# meta data
+m <- read_csv("../Results/Sample_omic_table.csv")
+comb_meta_path <- "../Results/Combined_gr_meta_data.csv"
+meta <- read_csv(comb_meta_path) %>%
+  #rename(sample = "svamp_ID") %>%
+  mutate(across(2:27, ~ factor(.x)))
+
+# omic data
+MG_path <- "../Results/MixOmic/Metageonome_vagswab_CLR_transformed_1e-6.RDS"
+FM_path <- "../Tidy_data/Metagenomics/Functional/Functional_annotation_relative_abundance_filtered.csv"
+MB_path <- "../Results/MixOmic/Metabolom_Normalized.csv"
+MB_annot_path <- "../Tidy_data/Metabolomics/metabolomics_annotation.csv"
+
+MG_matrix <- readRDS(MG_path)
+FM_data <- read_csv(FM_path)
+MB_matrix <- read_csv(MB_path)
+
+annotation_MB <- read_csv(MB_annot_path)
+
+# omic colour pallet
+MG_hirarchy <- read_csv("../Results/Metagenomics/Metagenome_col_pal.csv")
+FM_colours <- read_csv("../Results/Metagenomics/Functional_col_pal.csv")
+MB_colours <- read_csv("../Results/Metagenomics/Metabolome_col_pal.csv")
+```
+
+```{r pallets}
+# colour pallet
+gene_col <- c(
+  "#B71E42FF",
+  "#DE478E",
+  "#BC72F0FF",
+  "#795FAFFF",
+  "#D53DD0",
+  "#EA6312",
+  "#FFAE34FF",
+  "#EF6F6AFF",
+  "#8CC2CAFF",
+  "#6388B4FF"
+)
+pal <- list(
+  fct1_clus = c("#33A02C", "#B2DF8A", "#FF7F00", "#FDBF6F"),
+  RVVC_pos = c("#A6CEE3", "#1F78B4", "#e490c4ff", "#c12d88ff"),
+  "Clinical score (0-5)" = brewer.pal(6, name = "Reds"),
+  CST = c(
+    "I" = "#148F77",
+    "II" = "#6d9f06",
+    "III" = "#A3E4D7",
+    "IV-B" = "#E794C1",
+    "IV-C" = "#b5cb8c",
+    "V" = "#43BA8F"
+  )
+)
+
+# default ggplot2 pallet:
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+gg_color_hue(4)
+
+tax_pallet = c(brewer.pal(12, "Set3"), brewer.pal(8, "Dark2"))
+other <- c(
+  "#E3E6AD",
+  "#F8D0A4",
+  "#c4ce96",
+  "#9aacce",
+  "#e1caff",
+  "#abc5bf",
+  "#ffffd4",
+  "#c0a2c1",
+  "#c8ffd5",
+  "#c8ffd5",
+  "#afb7ee",
+  "#ffc8d9",
+  "#ffc8d9",
+  "#e7b993",
+  "#c8ffd5",
+  "#c4cea9",
+  "#a1b37d",
+  "#a6cca7",
+  "#d1b9ee",
+  "#88c29c",
+  "#fdcc8a",
+  "#91c6f7",
+  "#f5f8bd",
+  "#8db1c5",
+  "#fab0aa",
+  "#7cb6b6",
+  "#96f3eb",
+  "#6ececc"
+)
+```
+
+## 2. Load trained MOFA model
+We load the model with the highest elbo score
+
+```{r load-MOFA-model}
+#| eval: true
+#| include: true
+#| warning: false
+#| message: false
+#| tbl-colwidths: [60,40]
+elbo_table <- read_csv("../Results/MOFA/elbo_table_noS84_1e-6_57MG.csv")
+knitr::kable(elbo_table)
+best_seed <- elbo_table$seed[which.max(abs(elbo_table$elbo))]
+
+MOFAmodel <- load_model(
+  paste0("../Results/MOFA/MOFA_allBL_noS84_1e-6_57MG_seed_", best_seed, ".hdf5")
+)
+
+# add meta data to model
+samples_metadata(MOFAmodel) <- samples_metadata(MOFAmodel)[, c(
+  "sample",
+  "group"
+)] %>%
+  left_join(meta, by = c("sample"))
+```
+
+## 3. Plot Factor 1 cluster
+```{r factor-with-distribution-function}
+#| code-fold: true
+# ----------------------
+# Plot Factor Density Function
+# ----------------------
+plot_mofa_factor_vs_variable <- function(
+  df,
+  factor = 1,
+  y_var,
+  palette = pal[[y_var]],
+  jitter_width = 0.1,
+  add_marginal = TRUE,
+  marginal_type = "density"
+) {
+  # jitter object
+  jitterer <- position_jitter(width = jitter_width, seed = 123)
+
+  df_ <- df %>% mutate(!!sym(y_var) := factor(!!sym(y_var)))
+
+  # Main ggplot
+  p <- ggplot(
+    df,
+    aes(
+      x = .data[[paste0("Factor", factor)]],
+      y = .data[[y_var]],
+      colour = .data[[y_var]]
+    )
+  ) +
+    geom_point(
+      size = 1,
+      alpha = 0.8,
+      show.legend = FALSE,
+      position = jitterer
+    ) +
+    geom_point(
+      aes(colour = NULL),
+      pch = 21,
+      size = 1,
+      alpha = 0.4,
+      show.legend = FALSE,
+      colour = "gray",
+      position = jitterer
+    ) +
+    geom_boxplot(
+      aes(colour = .data[[y_var]]),
+      fill = "transparent",
+      box.linewidth = 0.2,
+      whisker.linewidth = 0.2,
+      show.legend = FALSE,
+      outlier.shape = NA,
+      median.color = "black"
+    ) +
+    coord_cartesian(expand = TRUE) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_line(linewidth = 0.2),
+      text = element_text(size = 7),
+      plot.margin = unit(c(0, 0, 0, -0), "cm"),
+      axis.text.y.left = element_blank(),
+      axis.title.x = element_text(vjust = 1),
+      axis.title.y.left = element_blank()
+    )
+
+  # Add palette if provided
+  if (!is.null(palette)) {
+    p <- p + scale_colour_manual(values = palette)
+  }
+
+  # Add marginal plot if requested
+  if (add_marginal) {
+    p <- ggMarginal(
+      p,
+      type = marginal_type,
+      groupColour = TRUE,
+      groupFill = TRUE,
+      trim = FALSE,
+      linewidth = 0.2,
+      margins = "x",
+      size = 1
+    )
+  }
+  #p <- p + theme( plot.margin = unit(c(0, 0, -1, -0), "cm"))
+  return(p)
+}
+```
+
+```{r factor-with-distribution-plots}
+#| fig-width: 3
+#| fig-height: 2
+# ----------------------
+# Prepp df
+# ----------------------
+# Extract factors, reshape wide, join metadata
+df <- get_factors(MOFAmodel, factors = c(1:4), as.data.frame = TRUE) %>%
+  as_tibble() %>%
+  select(-group) %>%
+  #mutate(fct1_clus = as.character(clusters$cluster[.$sample])) %>%
+  pivot_wider(names_from = "factor") %>%
+  left_join(samples_metadata(MOFAmodel), by = "sample") %>%
+  mutate(across(fct1_clus:fct4_clus, ~ factor(.x)))
+
+# ----------------------
+# Plot
+# ----------------------
+# quartz(width = 3, height = 2, dpi = 150)
+A1 <- plot_mofa_factor_vs_variable(
+  df,
+  y_var = "fct1_clus"
+)
+A1
+```
+
+## 4. Plot top factor 1 features by view
+```{r modified-MOFA-heatmap-function}
+#| code-fold: true
+# Modified function: plot_data_heatmap2() with sample_order argument
+# It is identical to the original except for 13 added lines.
+plot_data_heatmap2 <- function(
+  object,
+  factor,
+  view = 1,
+  groups = "all",
+  features = 50,
+  legend = TRUE,
+  max_val = NULL,
+  annotation_features = NULL,
+  annotation_samples = NULL,
+  labels_row = NULL,
+  transpose = FALSE,
+  imputed = FALSE,
+  denoise = FALSE,
+  max.value = NULL,
+  min.value = NULL,
+  sample_order = NULL, # ✅ NEW ARGUMENT
+  ...
+) {
+  if (!is(object, "MOFA")) {
+    stop("'object' has to be an instance of MOFA")
+  }
+
+  stopifnot(length(factor) == 1)
+  stopifnot(length(view) == 1)
+
+  # ✅ INTERNAL HELPERS MUST USE triple-colon
+  groups <- MOFA2:::.check_and_get_groups(object, groups)
+  factor <- MOFA2:::.check_and_get_factors(object, factor)
+  view <- MOFA2:::.check_and_get_views(object, view)
+
+  # Extract model matrices
+  W <- do.call(
+    rbind,
+    get_weights(object, views = view, factors = factor, as.data.frame = FALSE)
+  )
+  Z_list <- lapply(get_factors(object)[groups], function(z) {
+    as.matrix(z[, factor])
+  })
+  Z <- do.call(rbind, Z_list)[, 1]
+  Z <- Z[!is.na(Z)]
+
+  # Choose raw, imputed, or denoised data
+  if (isTRUE(denoise)) {
+    data <- predict(object, views = view, groups = groups)[[1]]
+  } else if (isTRUE(imputed)) {
+    data <- get_imputed_data(object, view, groups)[[1]]
+  } else {
+    data <- get_data(object, views = view, groups = groups)[[1]]
+  }
+  if (is(data, "list")) {
+    data <- do.call(cbind, data)
+  }
+
+  # ----------------------
+  # FEATURE SELECTION
+  # ----------------------
+  if (is.numeric(features)) {
+    if (length(features) == 1) {
+      features <- rownames(W)[tail(order(abs(W)), n = features)]
+    } else {
+      features <- rownames(W)[order(-abs(W))[features]]
+    }
+    features <- names(W[features, ])[order(W[features, ])]
+  } else if (is.character(features)) {
+    stopifnot(all(features %in% features_names(object)[[view]]))
+  } else {
+    stop("features must be numeric or character vector")
+  }
+
+  data <- data[features, ]
+  data <- data[, names(Z), drop = FALSE]
+  data <- data[, apply(data, 2, function(x) !all(is.na(x))), drop = FALSE]
+
+  # ----------------------
+  # ✅ CUSTOM SAMPLE ORDER
+  # ----------------------
+  if (is.null(sample_order)) {
+    # default MOFA2 ordering (by factor value)
+    order_samples <- names(sort(Z, decreasing = TRUE))
+    order_samples <- order_samples[order_samples %in% colnames(data)]
+  } else {
+    # user‑specified ordering
+    sample_order <- sample_order[sample_order %in% colnames(data)]
+    if (!all(sample_order %in% colnames(data))) {
+      stop("sample_order contains sample names not found in data")
+    }
+    order_samples <- sample_order
+  }
+
+  data <- data[, order_samples, drop = FALSE]
+
+  # ----------------------
+  # ANNOTATION HANDLING
+  # ----------------------
+  if (!is.null(annotation_samples)) {
+    if (is.data.frame(annotation_samples)) {
+      if (any(!order_samples %in% rownames(annotation_samples))) {
+        stop("annotation_samples rownames must match sample names")
+      }
+
+      annotation_samples <- annotation_samples[order_samples, , drop = FALSE]
+    } else if (is.character(annotation_samples)) {
+      tmp <- object@samples_metadata
+      rownames(tmp) <- tmp$sample
+      tmp$sample <- NULL
+      tmp <- tmp[order_samples, , drop = FALSE]
+      annotation_samples <- tmp[, annotation_samples, drop = FALSE]
+      rownames(annotation_samples) <- order_samples
+    } else {
+      stop("annotation_samples must be a data.frame or character vector")
+    }
+
+    # logical/character must become factor
+    to_factor <- sapply(annotation_samples, function(x) {
+      is.logical(x) || is.character(x)
+    })
+    if (any(to_factor)) {
+      annotation_samples[, which(to_factor)] <-
+        lapply(annotation_samples[, which(to_factor), drop = FALSE], as.factor)
+    }
+  }
+
+  if (transpose) {
+    data <- t(data)
+    tmp_ann <- annotation_samples
+    annotation_samples <- annotation_features
+    annotation_features <- tmp_ann
+  }
+
+  # cap values
+  if (!is.null(max.value)) {
+    data[data >= max.value] <- max.value
+  }
+  if (!is.null(min.value)) {
+    data[data <= min.value] <- min.value
+  }
+  data_ <<- data
+  if (!is.null(labels_row)) {
+    row_names <- str_replace(
+      rownames(data),
+      "^(superpathway of [^,]+),.*",
+      "\\1"
+    )
+  } else {
+    row_names <- rownames(data)
+  }
+
+  # ----------------------
+  # ✅ FINAL HEATMAP CALL
+  # ----------------------
+  #RdBu <- brewer.pal(11, "RdBu")
+  # RdYlBu <- rev(brewer.pal(7, "RdYlBu")) # NB! 7 vs 11 makes a huge dfference, 7 gives smoother transition of colour
+  col2 <- rev(brewer.pal(7, "RdYlBu"))
+  pheatmap::pheatmap(
+    data,
+    treeheight_row = 0,
+    cellwidth = 1,
+    fontsize = 8,
+    show_colnames = F,
+    border_color = NA,
+    labels_row = row_names,
+    legend = legend,
+    annotation_legend = legend,
+    color = colorRampPalette(col2)(100),
+    breaks = if (!is.null(max_val)) {
+      seq(-max_val, max_val, length.out = 101)
+    } else {
+      NULL
+    },
+    annotation_row = annotation_features,
+    annotation_col = annotation_samples,
+    ...
+  )
+}
+
+# old alternativer version:
+# set sample order (columns)
+# NB! can not be used with denoise = TRUE!! (because it changes the Z values used to compute the denoised values used in the heatmap )
+set_sample_order <- function(MOFAmodel, factor, order) {
+  Z <- MOFAmodel@expectations$Z$single_group[, factor]
+
+  # assign artificial values based on your desired order
+  Z[order] <- seq_along(order)
+
+  MOFAmodel@expectations$Z$single_group[, factor] <- Z
+  MOFAmodel
+}
+
+# MOFAmodel2 <- set_sample_order(MOFAmodel, factor = 1, order = sample_order)
+```
+
+```{r transcriptomics_heatmap}
+#| fig-width: 10
+#| output: false
+#| code-fold: true
+meta_headers <- colnames(samples_metadata(MOFAmodel))
+gr_df <- samples_metadata(MOFAmodel)[, c(
+  "pos",
+  "fct1_clus",
+  "Clinical_score_(0-5)",
+  "RVVC_pos",
+  "CST",
+  "BV",
+  "Wet smear: clue cells (y/n)",
+  "metab_louvain"
+)] %>% #"sample",
+  mutate_at(., 1:ncol(.), factor)
+rownames(gr_df) <- samples_metadata(MOFAmodel)$sample
+
+# determine column order when cluster_cols=F
+sample_order <- meta %>%
+  filter(sample %in% rownames(gr_df)) %>%
+  # mutate(fct1_clus = factor(.$fct1_clus, levels = c("3", "4", "1", "2"))) %>%
+  arrange(RVVC_pos) %>%
+  #arrange(RVVC_pos, `Clinical_score_(0-5)`) %>%
+  arrange(fct1_clus, desc(`Clinical_score_(0-5)`)) %>%
+  pull(sample)
+
+gr_df <- gr_df[sample_order, ]
+
+ann_colors <- map(colnames(gr_df), function(val) {
+  # Levels for this column
+  levs <- levels(gr_df[[val]])
+
+  # CASE 1: column exists in pal → use provided palette
+  if (val %in% names(pal)) {
+    colors <- pal[[val]]
+    return(set_names(colors, levs))
+  }
+  # CASE 2: column not in pal → generate paired palette
+  colors <- gg_color_hue(length(levs))
+  set_names(colors, levs)
+  # colors <- brewer.pal(length(levs), "Paired")
+  # if (length(levs) == length(colors)) {
+  #   set_names(colors, levs)
+  # } else {
+  #   set_names(colors[1:length(levs)], levs)
+  # }
+})
+# Name the list by column names
+ann_colors <- set_names(ann_colors, colnames(gr_df))
+
+# quartz(width = 6, height = 4, dpi = 150)
+TR <- plot_data_heatmap2(
+  MOFAmodel,
+  view = "Transcriptomics",
+  factor = 1,
+  features = 20,
+  legend = FALSE,
+  max_val = 3.5,
+  #sample_order = sample_order,
+  cluster_cols = F,
+  annotation_samples = gr_df[, 2:5], #gr_df[,-1], "Clin_gr"
+  denoise = FALSE,
+  scale = "row",
+  annotation_colors = ann_colors
+)
+
+# quartz(width = 7, height = 4, dpi = 50)
+MB <- plot_data_heatmap2(
+  MOFAmodel,
+  view = "Metabolomics",
+  factor = 1,
+  features = 20,
+  legend = FALSE,
+  max_val = 3.5,
+  #sample_order = NULL,
+  cluster_cols = F,
+  annotation_samples = gr_df[, c(2:5)], #gr_df[,-1], "Clin_gr"
+  denoise = F,
+  scale = "row",
+  annotation_colors = ann_colors
+)
+
+FM <- plot_data_heatmap2(
+  MOFAmodel,
+  view = "Functional",
+  factor = 1,
+  features = 20,
+  labels_row = "shorten",
+  max_val = 3.5,
+  #sample_order = NULL,
+  cluster_cols = F,
+  annotation_samples = gr_df[, c(2:5)], #gr_df[,-1], "Clin_gr"
+  denoise = F,
+  scale = "row",
+  annotation_colors = ann_colors
+)
+```
+
+```{r combine-heatmaps-v}
+#| fig-width: 11.5
+#| fig.height: 3
+# quartz(width = 11.5, height = 3, dpi = 100)
+plot_grid(
+  TR$gtable,
+  MB$gtable,
+  FM$gtable,
+  nrow = 1,
+  rel_widths = c(0.75, 0.9, 2)
+)
+```
+
+```{r combine-heatmaps-h}
+#| fig-width: 6.5
+#| fig.height: 10
+# quartz(width = 6.5, height = 10, dpi = 90)
+plot_grid(
+  TR$gtable, #NULL,
+  MB$gtable, #NULL,
+  FM$gtable,
+  #axis = "l",
+  align = c("v"),
+  ncol = 1
+  #rel_widths = c(1, 1.2, 2)
+)
+```
+
+plot_data_heatmap has an interesting argument to “beautify” the heatmap: `denoise = TRUE`. Instead of plotting the (noisy) input data, we can plot the data reconstructed by the model, where noise has been removed:
+
+```{r facet-bar-function}
+# ============================================================
+# FUNCTION: gr.fun()
+# ============================================================
+# Description:
+# Assigns dominant microbial groups to samples based on
+# highest relative abundance taxa. Used for downstream
+# grouping and visualization of metagenomic profiles.
+#
+# Workflow:
+# 1. Group data by sample
+# 2. Identify taxa with highest abundance
+# 3. Extract dominant genus/group labels
+# 4. Recode labels into simplified categories
+#
+# Arguments:
+# df: Data frame containing sample-level abundance data
+#
+# Returns:
+# Data frame with added dominant group annotation column
+#
+# Dependencies:
+# tidyverse, stringr
+# ============================================================
+gr.fun <- function(df) {
+  groups <- df %>%
+    # df_long %>% filter(sample == "S29") %>%
+    # df_long %>%
+    group_by(sample) %>%
+    arrange(desc(abundance)) %>%
+    mutate(gr = species[which.max(abundance)]) %>%
+    mutate(gr = str_extract(first(gr), "^\\w+")) %>%
+    mutate(
+      gr = case_when(
+        str_detect(gr, "Lactobacillus|Gardnerella") ~ gr,
+        TRUE ~ "other"
+      )
+    ) %>%
+    mutate(
+      gr = ifelse(
+        str_detect(first(species), "iners"),
+        "iners",
+        gr
+      )
+    ) %>%
+    mutate(
+      gr = ifelse(
+        gr == "iners" &
+          str_detect(nth(species, n = 2), "crispatus"),
+        "Lactobacillus",
+        gr
+      )
+    ) %>%
+
+    ungroup() %>%
+    select(sample, gr) %>%
+    unique() %>%
+    deframe()
+  return(groups)
+}
+# ============================================================
+# FUNCTION: factor.fun()
+# ============================================================
+# Description:
+# Categorizes microbial taxa into predefined community
+# groups and prepares formatted abundance summaries for
+# downstream plotting and interpretation.
+#
+# Workflow:
+# 1. Define ordered microbial group levels
+# 2. Match taxa to group categories
+# 3. Aggregate and summarize abundance patterns
+# 4. Prepare output for plotting functions
+#
+# Arguments:
+# df: Data frame containing abundance and taxonomy data
+#
+# Returns:
+# Formatted data frame with group annotations
+#
+# Dependencies:
+# tidyverse, forcats, stringr
+# ============================================================
+# order samples by percentage of specified taxa based on assigned microbiome group
+# NB! I found that I got a cleaner looking graph by using gardnerella also for L4 (typ = identity)
+factor.fun <- function(df) {
+  # title1 ----
+  l <- c(
+    "Lactobacillus" = "crispatus",
+    "iners" = "iners",
+    "Gardnerella" = "Gardnerella",
+    "other" = "Gardnerella"
+  )
+  imap(
+    l,
+    ~ filter(df, gr == .y & str_detect(species, .x)) %>%
+      arrange(., desc(abundance)) %>%
+      select(sample, gr) %>%
+      unique() %>%
+      pull(., "sample")
+  ) %>%
+    unlist()
+}
+#| code-fold: true
+# ============================================================
+# FUNCTION: legend_height_cm()
+# ============================================================
+# Description:
+# Calculates the total height of a ggplot legend object
+# in centimeters. Used for dynamically scaling multi-panel
+# figure layouts.
+#
+# Workflow:
+# 1. Extract legend height units
+# 2. Sum total legend height
+# 3. Convert height to centimeters
+#
+# Arguments:
+# leg :
+#   ggplot legend grob object
+#
+# Returns:
+# Numeric legend height in centimeters
+#
+# Dependencies:
+# grid
+# ============================================================
+legend_height_cm <- function(leg) {
+  grid::convertUnit(
+    sum(leg$heights),
+    unitTo = "cm",
+    valueOnly = TRUE
+  )
+}
+# ============================================================
+# FUNCTION: get_legend.fun()
+# ============================================================
+# Description:
+# Generates customized legends for abundance-based plots.
+# Used to create compact and publication-ready annotation
+# legends with controlled spacing and formatting.
+#
+# Workflow:
+# 1. Create temporary ggplot object
+# 2. Apply custom fill scales and formatting
+# 3. Extract legend object
+# 4. Return formatted legend grob
+#
+# Arguments:
+# df :
+#   Data frame containing plotting annotations
+#
+# title :
+#   Legend title
+#
+# id :
+#   Identifier column used for plotting
+#
+# colours :
+#   Named vector of colors
+#
+# txt_size :
+#   Legend text size
+#   Default = 10
+#
+# Returns:
+# ggplot legend grob object
+#
+# Dependencies:
+# ggplot2, cowplot/grid utilities
+# ============================================================
+get_legend.fun <- function(df, title, feature, id, colours, txt_size = 10) {
+  # https://stackoverflow.com/questions/73711918/how-to-remove-majority-of-blank-space-from-get-legend
+  p <- ggplot() +
+    geom_col(
+      data = df,
+      aes(fill = .data[[feature]], y = abundance, x = .data[[id]])
+    ) +
+    scale_fill_manual(title, values = colours[unique(pull(df, feature))]) +
+    guides(
+      fill = guide_legend(
+        override.aes = list(size = 2),
+        keyheight = .5,
+        keywidth = .5
+      )
+    ) +
+    theme(
+      text = element_text(size = txt_size),
+      legend.background = element_blank(),
+      legend.title = element_text(margin = margin(b = -0.1))
+    )
+  l <- cowplot::get_legend(p)
+  return(l)
+}
+#grid::grid.draw(c$legend[[1]])
+# ============================================================
+# FUNCTION: Facet_bar.fun()
+# ============================================================
+# Description:
+# Creates a faceted stacked bar plot using ggplot2, where
+# samples are displayed on the x-axis and abundance values
+# are stacked according to a specified grouping variable.
+# NB! position = "fill", scales each bar to have the same height (100%)
+#
+# The plot is further divided into facets based on a user-
+# defined variable, allowing comparison of compositional
+# patterns across experimental groups or conditions.
+#
+# Workflow:
+# 1. Map x-axis, y-axis, and fill aesthetics from input data
+# 2. Generate stacked bar plot of abundance values
+# 3. Apply minimal theme for clean visualization
+# 4. Remove plot expansion to avoid extra spacing
+# 5. Apply manual color scale for fill categories
+# 6. Customize theme elements (axes, margins, legend)
+# 7. Rotate and format x-axis labels for readability
+# 8. Remove axis titles for cleaner faceted output
+# 9. Facet plot by a user-defined variable with free x-scale
+#    and free x-space for independent panel scaling
+#
+# Arguments:
+# df :
+#   Data frame containing plotting data.
+#
+#   Required columns:
+#     - abundance : numeric values representing feature abundance
+#     - grouping variable specified in `fill`
+#     - grouping variable specified in `x_axis`
+#
+# facet_var :
+#   Variable used to define faceting structure.
+#   Supports tidy evaluation ({{ }}), typically categorical.
+#
+# fill :
+#   Character string specifying the column used for fill
+#   aesthetics (default: "annot").
+#
+# colours :
+#   Named vector of colors used in scale_fill_manual().
+#   Names must match levels of the fill variable.
+#
+# x_axis :
+#   Character string specifying the x-axis variable
+#   (default: "sample").
+#
+# Returns:
+#   A ggplot object representing a faceted stacked bar plot.
+#
+# Plot characteristics:
+#   - Stacked bar plot (position = "stack")
+#   - Faceted by `facet_var` with free x-scales
+#   - Minimal theme with customized axis and strip styling
+#   - Legend removed for cleaner multi-panel visualization
+#
+# Side effects:
+#   None
+#
+# Dependencies:
+#   ggplot2
+#   rlang (for {{ }} tidy evaluation)
+#   grid (for unit())
+# ============================================================
+
+Facet_bar.fun <- function(
+  df,
+  facet_var,
+  fill = "pathway",
+  colours,
+  x_axis = "sample",
+  annot_col = NULL, #"Clinical score (0-5)",
+  strip_colours = NULL
+) {
+  # -------------------------------
+  # Apply strip colours if provided
+  # -------------------------------
+  # Only colour strips in x-direction
+  if (!is.null(strip_colours)) {
+    strip <- facet_grid2(
+      cols = vars(.data[[facet_var]]),
+      scales = "free_x",
+      space = "free_x",
+      strip = strip_themed(background_x = elem_list_rect(fill = strip_colours))
+    )
+  } else {
+    strip <- facet_grid(
+      cols = vars(.data[[facet_var]]),
+      scales = "free_x",
+      space = "free_x"
+    )
+  }
+
+  # -------------------------------
+  #  Annotation above barplot
+  # -------------------------------
+  library(ggnewscale)
+  if (!is.null(annot_col)) {
+    annot <- list(
+      new_scale_fill(),
+      geom_tile(
+        aes(x = sample, y = 1.001, fill = .data[[annot_col]]),
+        inherit.aes = FALSE,
+        height = 0.03, #width = 0.9
+      ),
+      scale_fill_manual(values = pal[[annot_col]]),
+      guides(
+        fill = guide_legend(
+          override.aes = list(size = 2),
+          ncol = 1,
+          byrow = T,
+          keyheight = .4,
+          keywidth = .6
+        )
+      )
+    )
+  } else {
+    annot <- NULL
+  }
+
+  p <- ggplot(
+    df,
+    aes(fill = .data[[fill]], y = abundance, x = .data[[x_axis]])
+  ) +
+    geom_bar(position = "fill", stat = "identity") +
+    theme_minimal() +
+    coord_cartesian(expand = FALSE) +
+    scale_fill_manual(values = colours) +
+    #scale_x_discrete(drop = TRUE) +
+    #scale_x_discrete(limits = levels(df$sample),drop = TRUE) +
+    scale_y_continuous(labels = scales::label_percent(scale = 100)) +
+    theme(
+      strip.background = element_rect(colour = "gray", fill = NA),
+      panel.border = element_rect(colour = "gray", fill = NA),
+      plot.margin = unit(c(0.1, 0, 0.2, 0), "cm"),
+      #axis.text.x = element_blank(),
+      axis.text.x = element_text(angle = 90, hjust = 1),
+      # axis.text.x = element_text(
+      #   angle = 90,
+      #   vjust = 0.5,
+      #   hjust = 1,
+      #   size = 8,
+      #   margin = margin(t = -5, b = 3)
+      # ),
+      axis.title.y = element_blank(),
+      axis.title.x = element_blank(),
+      legend.position = "none"
+    ) +
+    strip +
+    annot
+}
+```
+
+```{r weights}
+weights <- get_weights(MOFAmodel, factors = 1, as.data.frame = T) %>%
+  as_tibble() %>%
+  mutate(feature = as.vector(.$feature)) %>%
+  group_by(view) %>%
+  arrange(desc(abs(value))) %>%
+  split(~view)
+
+weights$Metagenomics <- weights$Metagenomics %>%
+  arrange(desc(abs(value))) %>%
+  mutate(feature = str_replace(feature, "_", " "))
+```
+
+
+```{r prepp-MB-data}
+# select samples
+MB_data <- MB_matrix %>%
+  select(names = "svamp_ID", any_of(m$sample[m$at_least_two & m$all_BL]))
+
+# add hirarchy
+chem_hierarchy <- read_csv("../Results/Metagenomics/MB_chem_hierarchy.csv")
+MB_data <- MB_data %>%
+  left_join(select(annotation_MB, names, HMDB), .) %>%
+  left_join(chem_hierarchy, .) %>%
+  rename(
+    MB_Class1 = "ClassyFire_super_class",
+    MB_Class2 = "ClassyFire_class",
+    MB_Class3 = "ClassyFire_sub_class"
+  )
+# col pal
+MB_colours <- set_names(MB_colours$col, MB_colours$Pathway)
+```
+
+```{r prepp-MG-data}
+# select samples
+MG_data <- MG_matrix$data$strain %>%
+  as_tibble(., rownames = "sample") %>%
+  filter(sample %in% m$sample[m$at_least_two & m$all_BL])
+
+# clean up names
+# remove long strain id, replace with int
+new_names <- sub("\\s+\\S+$", "", colnames(MG_data)) # remove strain id
+new_names <- make.unique(new_names, sep = " ") # Make names unique
+new_names <- sub("_", " ", new_names) # remove strain id
+colnames(MG_data) <- new_names # Assign new names
+
+# get colpal for top weights
+MG_hirarchy <- MG_hirarchy %>%
+  arrange(desc(sum)) %>%
+  mutate(species = factor(.$species, levels = unique(.$species))) %>%
+  mutate(genus = factor(.$genus, levels = unique(.$genus))) %>%
+  arrange(genus, species, strain)
+
+MG_colours <- set_names(MG_hirarchy$col, MG_hirarchy$strain)
+
+# you can choose if you want to include species by sum abundance or by alfabetical
+# dpending on if you use the levels() or just the order of n
+n_lvl <- MG_hirarchy$species %>% unique() %>% as.vector()
+n <- levels(MG_hirarchy$species)[1:20]
+
+top_feat <- pull(weights$Metagenomics, "feature")[1:20]
+new <- setdiff(top_feat, names(MG_colours))
+MG_colours <- set_names(
+  c(MG_colours, c(tax_pallet[1:length(new)], "gray")),
+  c(names(MG_colours), c(new, "other"))
+)
+
+# I have to get MG_colours to contain all of the taxa at species level in order to set factor levels or i have to apply other before
+```
+
+```{r col-pal-taxa}
+#| eval: false
+##################
+# COLOUR PALLETS #
+##################
+#### colour pallet ####
+
+# "Lactobacillus crispatus" = "#148F77",
+# "Lactobacillus iners" = "#A3E4D7",
+# "Lactobacillus gasseri" = "#6D9F06",
+# "Lactobacillus jensenii" = "#4E7705",
+# "Lactobacillus acidophilus" = "#b4cb8c",
+# "Gardnerella vaginalis" = "#CC79A7", #"#7D3560",
+# "Fannyhessea vaginae" = "#EFB6D6", #"#E794C1",
+# "Streptococcus agalactiae" = "#FFD5AF",
+# "Limosilactobacillus portuensis" = "#F09163",
+# "Candida albicans" = "#8B0000",
+# "Ureaplasma parvum" = "#ff7f00",
+# "other" = "#8B8B8B",
+
+# "Sneathia vaginalis" = "#7786e9",
+
+# "Coriobacteriales bacterium DNF00809" = "#afb7ee",
+# "GGB3012 SGB4003" = "#8892d5",
+
+# "Staphylococcus aureus" = "#566be9",
+# "Prevotella bivia" = "#fecf44",
+# "Prevotella amnii" = "#dcb12e",
+# "Dialister micraerophilus" = "#ffe2c9",
+# "Aerococcus christensenii" = "#A569BD",
+# "Megasphaera lornae" = "#C17754"
+
+taxa_order.fun <- function(df) {
+  lvls <- names(pal_list)
+  gr_lvls <- lvls %>% paste0(., collapse = "|")
+  d <- df %>%
+    mutate(
+      gr_lvl = ifelse(
+        str_detect(feature, gr_lvls),
+        str_extract(feature, gr_lvls),
+        "other"
+      )
+    ) %>%
+    group_by(gr_lvl) %>%
+    arrange(desc(abundance)) %>%
+    select(gr_lvl, feature) %>%
+    ungroup() %>%
+    unique() %>%
+    mutate(gr_lvl = factor(.$gr_lvl, levels = lvls)) %>%
+    arrange(gr_lvl) %>%
+    nest(.by = "gr_lvl") %>%
+    mutate(
+      data = map2(
+        gr_lvl,
+        data,
+        ~ if (.x == "other") arrange(.y, as.character(feature)) else .y
+      )
+    ) %>%
+    unnest(cols = c(data))
+
+  col <- d %>%
+    group_by(gr_lvl) %>%
+    #mutate(col = list(pal_list[[cur_group_id()]])) %>%
+    mutate(col = pal_list[[cur_group_id()]][1:n()]) %>%
+    ungroup() %>%
+    select(-gr_lvl) %>%
+    deframe()
+
+  return(col)
+}
+
+pal_list <- list(
+  Lactobacillus = c(
+    "#148F77",
+    "#A3E4D7",
+    "#6D9F06",
+    "#4E7705",
+    "#b4cb8c",
+    "#6e9b20",
+    "#6ba705",
+    "#50701a"
+  ),
+  Gardnerella = c(
+    "#cc79a7",
+    "#8a3c4eff",
+    "#d45265ff",
+    "#f07487ff",
+    "#f1a6b1",
+    "#f5b4be",
+    "#f9d1d7"
+  ),
+  Fannyhessea = c("#EFB6D6", "#E794C1"),
+  Prevotella = colorRampPalette(colors = c("#e06806ff", "#eebc89ff"))(24),
+  # Prevotella = c(
+  #   "#e06806ff",
+  #   "#e2771fff",
+  #   "#e99a59ff",
+  #   "#f0c497ff",
+  #   "#eebc89ff"
+  # ),
+  Candida = c("#8B0000", "#c61717", "#d84141", "#ef7575"),
+  Megasphaera = c("#C17754", "#c7927a"),
+  Sneathia = c("#5b97e4", "#77bbe9"),
+  Aerococcus = c("#b1436d"),
+  Limosilactobacillus = colorRampPalette(colors = c("#A569BD", "#d3b1e1"))(5),
+  Coriobacteriales = c("#afb7ee"),
+
+  Staphylococcus = c("#566be9", "#909ff5", "#b9c3f8"),
+  Alloscardovia = c("#d771b7", "#e69fdf"),
+
+  Streptococcus = colorRampPalette(colors = c("#fac526", "#ffe9a7"))(14), #c("#fecf44", "#fac526", "#dcb12e") c("#FFD5AF"),
+  Dialister = c("#ffbb96", "#ffe2c9"),
+  Ureaplasma = c("#ff7f00", "#fead5b"),
+  Lacticaseibacillus = c("#8892d5", "#afb7ea"),
+  Bifidobacterium = colorRampPalette(colors = c("#59a14f", "#b5ebaeff"))(4),
+
+  #Veillonellaceae = c(),
+  #"GGB3012 SGB4003" = ,
+  GGB = c("#fecf44", "#fac526", "#dcb12e"), #c("#59a14f", "#77a371ff", "#71a38cff", "#9cd694ff", "#b5ebaeff"),
+  other = c("gray")
+  # other = c(
+  #   "#E3E6AD",
+  #   "#F8D0A4",
+  #   "#c4ce96",
+  #   "#9aacce",
+  #   "#e1caff",
+  #   "#abc5bf",
+  #   "#ffffd4",
+  #   "#c0a2c1",
+  #   "#c8ffd5",
+  #   "#c8ffd5",
+  #   "#afb7ee",
+  #   "#ffc8d9",
+  #   "#ffc8d9",
+  #   "#e7b993",
+  #   "#c8ffd5",
+  #   "#c4cea9",
+  #   "#a1b37d",
+  #   "#a6cca7",
+  #   "#d1b9ee",
+  #   "#88c29c",
+  #   "#fdcc8a",
+  #   "#91c6f7",
+  #   "#f5f8bd",
+  #   "#8db1c5",
+  #   "#fab0aa",
+  #   "#7cb6b6",
+  #   "#96f3eb",
+  #   "#6ececc"
+  # )
+)
+
+# top taxa
+top_taxa <- omics_tbl$df$Metagenomics %>%
+  mutate(genus = str_replace(species, " \\w+$", "")) %>%
+  summarise(sum = sum(abundance), .by = c("genus", "feature")) %>%
+  arrange(desc(sum)) %>%
+  nest(., .by = "genus") %>%
+  .[1:20, ]
+
+# use the information above to build a pallet for the 20 top abundant genus
+
+# top 20 genus colour pallet
+MG_colours <- omics_tbl$df$Metagenomics %>%
+  # Non-abundant taxa to "other":
+  mutate(
+    feature = ifelse(
+      grepl(paste0(top_taxa$genus, collapse = "|"), .$feature),
+      .$feature,
+      "other"
+    )
+  ) %>%
+  # gets colour for each taxa
+  taxa_order.fun(.)
+
+
+# top 20 features by factor weight
+# get colpal for top weights
+top_feat <- pull(weights$Metagenomics, "feature")[1:20]
+new <- setdiff(top_feat, names(MG_colours))
+old <- setdiff(names(MG_colours), top_feat)
+top_colMG <- set_names(
+  c(old, new),
+  c(MG_colours[old], tax_pallet[1:length(new)])
+)
+```
+
+```{r prepp-FM-data}
+# select samples:
+FM_data <- FM_data %>%
+  select(level, Pathway, any_of(m$sample[m$at_least_two & m$all_BL]))
+
+# clean up columns a bit
+FM_data <- FM_data %>%
+  separate(col = "Pathway", sep = "\\|", into = c("Pathway", "taxa")) %>%
+  separate(col = "Pathway", sep = ": ", into = c("pathway_id", "pathway")) %>%
+  mutate(taxa = ifelse(is.na(taxa), "total", taxa)) %>%
+  mutate(taxa = gsub("^.+s__", "", .$taxa))
+
+# select community level:
+FM_data <- FM_data %>%
+  filter(level == "community_lvl")
+
+# add MetaCys hirarchy
+mc_env <- new.env()
+load("/Users/vilkal/Downloads/MetaCyc_pathway_map.RData", envir = mc_env)
+pathway_map <- mc_env[[ls(mc_env)]] %>% as_tibble(rownames = "pathway_id")
+
+FM_data <- FM_data %>%
+  left_join(
+    pathway_map,
+    by = c("pathway_id", "pathway")
+  ) %>%
+  relocate(
+    any_of(c("Superclass1", "Superclass2", "pathway")),
+    .after = "pathway"
+  )
+
+# col pal
+FM_colours <- set_names(FM_colours$col, FM_colours$Pathway)
+```
+
+```{r MetaCyc-pathway-hierarchy}
+# Number of pathways per superclass
+superclass_counts <- c("Superclass1", "Superclass2") %>%
+  set_names() %>%
+  map(
+    .,
+    ~ FM_data %>%
+      # filter(!pathway_id %in% c("UNMAPPED", "UNINTEGRATED")) %>%
+      summarise(
+        n_pathways = n_distinct(pathway_id),
+        total_abundance = sum(
+          rowSums(pick(where(is.numeric)), na.rm = TRUE),
+          na.rm = TRUE
+        ),
+        .by = .x
+      ) %>%
+      mutate(perc_total = total_abundance / sum(total_abundance) * 100) %>%
+      arrange(desc(perc_total))
+  )
+knitr::kable(superclass_counts[[1]], caption = "Superclass 1", digits = 2)
+knitr::kable(superclass_counts[[2]], caption = "Superclass 2", digits = 2)
+```
+
+```{r omics-tibble}
+# ============================================================
+# 1. STORE BOTH OMICS IN A LIST (LONG FORMAT)
+# ============================================================
+omic_data <- list()
+
+# -------- Functional (FM) --------
+omic_data$Functional <- FM_data %>%
+  rename(feature = "pathway") %>%
+  filter(!pathway_id %in% c("UNMAPPED", "UNINTEGRATED")) %>%
+  pivot_longer(
+    cols = where(is.double),
+    names_to = "sample",
+    values_to = "abundance"
+  ) %>%
+  mutate(
+    abundance = abundance / sum(abundance, na.rm = TRUE),
+    .by = "sample"
+  )
+
+# -------- Metabolomics (MB) --------
+omic_data$Metabolomics <- MB_data %>%
+  rename(feature = "names") %>%
+  pivot_longer(
+    cols = where(is.double),
+    names_to = "sample",
+    values_to = "abundance"
+  )
+
+# -------- Metagenomics (MG) --------
+omic_data$Metagenomics <- MG_data %>%
+  pivot_longer(
+    cols = where(is.double),
+    names_to = "strain",
+    values_to = "abundance"
+  ) %>%
+  # create species column
+  mutate(species = str_replace(strain, " \\d", "")) %>%
+  # set low abundant species to "other"
+  mutate(feature = ifelse(.$species %in% n, .$species, "other")) %>%
+  # fix order of taxa
+  mutate(species = factor(species, levels = c(n_lvl, "other"))) %>%
+  # fix order of samples by getting gr before factor.fun()
+  mutate(gr = gr.fun(.)[as.character(.$sample)])
+
+sample_order <- factor.fun(omic_data$Metagenomics) %>%
+  as.vector() # test
+
+# ============================================================
+# 2. DEFINE FEATURE COLUMN + COLOURS + TOP FEATURES
+# ============================================================
+omics_tbl <- tibble(
+  omic = c("Functional", "Metabolomics", "Metagenomics"),
+  df = list(
+    omic_data$Functional,
+    omic_data$Metabolomics,
+    omic_data$Metagenomics
+  ),
+  # feature = c("pathway", "metabolite"),
+  feature = c("feature", "feature", "feature"),
+  top = c("feature", "feature", "species"),
+  colours = list(
+    FM_colours,
+    MB_colours,
+    MG_colours
+  ),
+  top_features = list(
+    pull(weights$Functional, "feature")[1:20],
+    pull(weights$Metabolomics, "feature")[1:20],
+    pull(weights$Metagenomics, "feature")[1:20]
+  )
+)
+
+# ============================================================
+# 3. STANDARDIZE ALL OMICS DATASETS
+# ============================================================
+# 1. add meta data
+# 2. make feature and fct1_clus factor
+# 3. arrange by feature
+meta_cols <- c("RVVC_pos", "Clinical score (0-5)", "fct1_clus")
+
+omics_tbl <- omics_tbl %>%
+  mutate(df = df, omic, df = set_names(df, omic)) %>%
+  mutate(
+    df = pmap(
+      list(df, colours),
+      function(df, colours) {
+        # add meta information:
+        df %>%
+          left_join(
+            select(meta, sample, all_of(meta_cols)),
+            by = "sample"
+          ) %>%
+          # make factor:
+          mutate(
+            # fct1_clus = factor(fct1_clus),
+            sample = factor(sample, levels = sample_order),
+            across(
+              all_of("feature"),
+              ~ factor(.x, levels = names(colours))
+            )
+          ) #%>%
+        # arrange(match(feature, names(colours)))
+      }
+    )
+  )
+
+# ============================================================
+# 4. ADD TOP FEATURE DATASETS
+# ============================================================
+omics_tbl <- omics_tbl %>%
+  mutate(
+    df_top = pmap(
+      list(df, top, top_features),
+      function(df, col, vals) {
+        filter(df, df[[col]] %in% vals)
+      }
+    )
+  ) %>%
+  mutate(df_top = set_names(df_top, omic))
+```
+
+```{r plots}
+# ============================================================
+# 5. GENERATE BARPLOTS USING pmap()
+# ============================================================
+# ---- All features ----
+plots_top <- omics_tbl %>%
+  mutate(
+    plot = pmap(
+      list(df, feature, colours),
+      function(df, feature, colours) {
+        Facet_bar.fun(
+          df = df,
+          facet_var = "fct1_clus",
+          fill = feature,
+          colours = colours,
+          strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
+          x_axis = "fct1_clus"
+        )
+      }
+    )
+  )
+plots_top$plot
+
+# ---- Top features ----
+plots_top <- omics_tbl %>%
+  mutate(
+    plot = pmap(
+      list(df_top, top, colours),
+      function(df, feature, colours) {
+        Facet_bar.fun(
+          df = df,
+          facet_var = "fct1_clus",
+          fill = feature,
+          colours = colours,
+          strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
+          x_axis = "fct1_clus"
+        )
+      }
+    )
+  )
+plots_top$plot
+
+# ---- All samples ----
+plots_top <- omics_tbl %>%
+  mutate(
+    plot = pmap(
+      list(df_top, colours),
+      function(df, colours) {
+        Facet_bar.fun(
+          df = df, #mutate(df, sample = forcats::fct_relevel(sample, sample_order)),
+          facet_var = "fct1_clus",
+          fill = "feature",
+          colours = colours,
+          #strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
+          x_axis = "sample",
+          #annot_col = "RVVC_pos"
+        )
+      }
+    )
+  )
+plots_top$plot$Metagenomics
+# df <- omics_tbl$df_top$Metagenomics
+
+# ---- All samples top ----
+plots_top <- omics_tbl %>%
+  mutate(
+    plot = pmap(
+      list(df_top, colours),
+      function(df, colours) {
+        Facet_bar.fun(
+          df = df, #mutate(df, sample = forcats::fct_relevel(sample, sample_order)),
+          facet_var = "fct1_clus",
+          fill = "feature",
+          colours = colours,
+          #strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
+          x_axis = "sample",
+          #annot_col = "RVVC_pos"
+        )
+      }
+    )
+  )
+plots_top$plot$Metagenomics
+
+# ============================================================
+# 6. COMBINE PLOTS
+# ============================================================
+plot_grid(
+  plotlist = plots_top,
+  ncol = 1
+)
+```
+
+```{r extra-plots}
+df_summary <- omics_tbl$df_top$Metabolomics %>%
+  group_by(fct1_clus, feature, MB_Class3, MB_Class2, MB_Class1) %>%
+  summarise(
+    mean_abund = mean(abundance, na.rm = TRUE),
+    se = sd(abundance, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  ) %>%
+  left_join(., select(weights$Metabolomics, feature, value)) %>%
+  mutate(facet = ifelse(value > 0, "up", "down"))
+
+ggplot(
+  df_summary,
+  aes(fct1_clus, mean_abund, group = feature, color = feature)
+) +
+  geom_line(alpha = 0.5) +
+  geom_point(size = 1.5) +
+  geom_errorbar(
+    aes(ymin = mean_abund - se, ymax = mean_abund + se),
+    width = 0.1
+  ) +
+  scale_color_manual(values = MB_colours) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(~facet, ncol = 1)
+
+
+ggplot(
+  df_summary,
+  aes(fct1_clus, mean_abund, group = feature, color = feature)
+) +
+  geom_line() + # group = 1
+  geom_point() +
+  #facet_wrap(~ metabolite, scales = "free_y") +
+  facet_wrap(~MB_Class2, scales = "free_y", ncol = 2) +
+  theme_minimal() +
+  scale_color_manual(values = MB_colours)
+```
+
+
+## 5. Plot MG barplots
+
+## 5. Plot FM barplots
+
+
+
+
+
+```{r plot-FM-barplot}
+#| fig.width: 6
+#| fig.height: 4
+#| eval: false
+# pivot longer and calculate perecentage for the 15 most abundant taxa
+df_long <- FM_data %>%
+  # 1) Remove unwanted pathways
+  filter(!pathway_id %in% c("UNMAPPED", "UNINTEGRATED")) %>%
+  # 2) Long format
+  pivot_longer(
+    cols = where(is.double),
+    names_to = "sample",
+    values_to = "abundance"
+  ) %>%
+  # 3) Re-normalize within each sample
+  mutate(
+    abundance = abundance / sum(abundance, na.rm = TRUE),
+    .by = "sample"
+  )
+
+FM_colours <- read_csv("../Results/Metagenomics/Functional_col_pal.csv")
+FM_colours <- set_names(FM_colours$col, FM_colours$Pathway)
+
+FM_df_ <- df_long %>%
+  left_join(
+    .,
+    select(meta, sample, RVVC_pos, `Clinical score (0-5)`, fct1_clus),
+    by = "sample"
+  ) %>%
+  # get right order of legend and x-axis by factor and arrange:
+  mutate(fct1_clus = factor(.$fct1_clus)) %>%
+  mutate(pathway = factor(.$pathway, levels = names(FM_colours))) %>%
+  arrange(match(pathway, names(FM_colours)))
+
+##########
+# LEGEND #
+##########
+meta_group <- "Superclass2"
+subgroup <- "pathway"
+c <- FM_df_ %>%
+  # filter only top 20 features to include in legend:
+  filter(pathway %in% pull(weights$Functional, "feature")[1:20]) %>%
+  {
+    . ->> FM_df_top
+  } %>%
+  nest(data = -sym(meta_group)) %>%
+  mutate(n_s = map_int(data, ~ n_distinct(.x$pathway))) %>%
+  # arrange(desc(n_s)) %>%
+  mutate(
+    legend = pmap(
+      list(data, !!sym(meta_group)),
+      ~ get_legend.fun(..1, ..2, "pathway", "sample", FM_colours, txt_size = 8)
+    )
+  ) %>%
+  mutate(
+    height = map_dbl(legend, ~ as.numeric(legend_height_cm(.)))
+  ) %>%
+  mutate(rel_height = height / sum(height))
+
+#############################
+# FUNCTIONAL META BAR PLOT #
+############################
+# quartz(width = 15, height = 11 )
+# all features
+FM_fct1_bar <- Facet_bar.fun(
+  FM_df_,
+  "fct1_clus",
+  fill = "pathway",
+  colours = FM_colours,
+  x_axis = "fct1_clus"
+)
+
+# only top 20 features for factor 1
+FM_fct1_bar_top <- Facet_bar.fun(
+  FM_df_top,
+  "fct1_clus",
+  fill = "pathway",
+  colours = FM_colours,
+  strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
+  x_axis = "fct1_clus"
+)
+
+l <- plot_grid(
+  plotlist = c$legend,
+  ncol = 1,
+  byrow = T,
+  rel_heights = c$rel_height,
+  rel_widths = c(1, 1),
+  align = "vh",
+  axis = "t"
+) # align = "hv",
+
+
+# quartz(width = 10.5, height = 6 )
+# plot_grid(bar, l, rel_widths = c(1, .6)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+FM_fct1_bar
+
+# quartz(width = 6, height = 4, dpi = 120)
+plot_grid(FM_fct1_bar, l, rel_widths = c(0.4, 1.1)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+plot_grid(FM_fct1_bar_top, l, rel_widths = c(0.4, 1.1)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+```
+
+```{r iners-only-samples}
+#| eval: false
+#| fig.width: 6
+#| fig.height: 4
+MG_iners <- MG_data %>%
+  select(sample, contains("iners")) %>%
+  arrange(desc(`Lactobacillus_iners SGB7025`)) %>%
+  filter(`Lactobacillus_iners SGB7025` >= 50)
+
+# quartz(width = 6, height = 4, dpi = 120)
+FM_fct1_bar_iners <- FM_df_top %>%
+  filter(sample %in% MG_iners$sample) %>%
+  mutate(sample = factor(.$sample, levels = MG_iners$sample)) %>%
+  Facet_bar.fun(
+    .,
+    "fct1_clus",
+    fill = "pathway",
+    colours = FM_colours,
+    strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
+    x_axis = "sample",
+    annot_col = "Clinical score (0-5)"
+  )
+FM_fct1_bar_iners
+```
+
+```{r plot-MB-barplot}
+#| eval: false
+#| fig.width: 3.5
+#| fig.height: 4
+# pivot longer and calculate perecentage for the 15 most abundant taxa
+df_long <- MB_data %>%
+  rename(metabolite = "names") %>%
+  # 1) Long format
+  pivot_longer(
+    cols = where(is.double),
+    names_to = "sample",
+    values_to = "abundance"
+  )
+
+MB_colours <- read_csv("../Results/Metagenomics/Metabolome_col_pal.csv")
+MB_colours <- set_names(MB_colours$col, MB_colours$Pathway)
+
+MB_df_ <- df_long %>%
+  left_join(
+    .,
+    select(meta, sample, RVVC_pos, `Clinical score (0-5)`, fct1_clus),
+    by = "sample"
+  ) %>%
+  # get right order of legend and x-axis by factor and arrange:
+  mutate(fct1_clus = factor(.$fct1_clus)) %>%
+  mutate(metabolite = factor(.$metabolite, levels = names(MB_colours))) %>%
+  arrange(match(metabolite, names(MB_colours)))
+
+##########
+# LEGEND #
+##########
+meta_group <- "MB_Class2"
+subgroup <- "metabolite"
+c <- MB_df_ %>%
+  # filter only top 20 features to include in legend:
+  filter(metabolite %in% pull(weights$Metabolomics, "feature")[1:20]) %>%
+  {
+    . ->> MB_df_top
+  } %>%
+  nest(data = -sym(meta_group)) %>%
+  mutate(n_s = map_int(data, ~ n_distinct(.x$metabolite))) %>%
+  # arrange(desc(n_s)) %>%
+  mutate(
+    legend = pmap(
+      list(data, !!sym(meta_group)),
+      ~ get_legend.fun(
+        ..1,
+        ..2,
+        "metabolite",
+        "sample",
+        MB_colours,
+        txt_size = 8
+      )
+    )
+  ) %>%
+  mutate(
+    height = map_dbl(legend, ~ as.numeric(legend_height_cm(.)))
+  ) %>%
+  mutate(rel_height = height / sum(height))
+
+#############################
+# FUNCTIONAL META BAR PLOT #
+############################
+# quartz(width = 15, height = 11 )
+# all features
+MB_fct1_bar <- Facet_bar.fun(
+  MB_df_,
+  "fct1_clus",
+  fill = "metabolite",
+  colours = MB_colours,
+  x_axis = "fct1_clus"
+)
+
+# only top 20 features for factor 1
+MB_fct1_bar_top <- Facet_bar.fun(
+  MB_df_top,
+  "fct1_clus",
+  fill = "metabolite",
+  colours = MB_colours,
+  strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
+  x_axis = "fct1_clus"
+)
+
+l <- plot_grid(
+  plotlist = c$legend,
+  ncol = 1,
+  byrow = T,
+  rel_heights = c$rel_height,
+  rel_widths = c(1, 1),
+  align = "vh",
+  axis = "t"
+) # align = "hv",
+
+
+# quartz(width = 10.5, height = 6 )
+# plot_grid(bar, l, rel_widths = c(1, .6)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+MB_fct1_bar
+
+# quartz(width = 3.5, height = 4, dpi = 120)
+plot_grid(MB_fct1_bar, l, rel_widths = c(1, 1.2)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+plot_grid(MB_fct1_bar_top, l, rel_widths = c(1, 1.2)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+```
+
+
+## 6. Combine plots
+
+```{r combine-plots}
+#| fig.width: 5.5
+#| fig.height: 4
+#| eval: false
+#############################
+# COMBINE ALL FIGURE PANELS #
+#############################
+# quartz(width = 5.5, height = 4, dpi = 150)
+Figure3 <- plot_grid(
+  A,
+  B,
+  ncol = 1,
+  rel_heights = c(1, 1),
+  labels = c('A', 'B')
+)
+ggsave(
+  "./Figures/Figure3.pdf",
+  Figure1,
+  width = 5.5,
+  height = 4,
+  bg = "white",
+  dpi = 1000
+)
+
+Figure3
+```
+
+
+
