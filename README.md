@@ -51,6 +51,11 @@ This repository will bring together multiple omics layers generated from the sam
 2. [02_DIABLO-models](https://vildeka.github.io/Candida-omics/02_DIABLO_models)
 
 
+### Figures
+1. [01_Figure](https://vildeka.github.io/Candida-omics/Figure1)
+2. [02_Figure](https://vildeka.github.io/Candida-omics/Figure2)
+3. [03_Figure](https://vildeka.github.io/Candida-omics/Figure3)
+
 *(More analysis pipelines and results will be added as the project progresses.)*
 
 ---
