@@ -72,6 +72,7 @@ MB_colours <- read_csv("../Results/Metagenomics/Metabolome_col_pal.csv")
 ```
 
 ```{r pallets}
+#| code-fold: true
 # colour pallet
 gene_col <- c(
   "#B71E42FF",
@@ -101,12 +102,12 @@ pal <- list(
 
 # default ggplot2 pallet:
 gg_color_hue <- function(n) {
-  hues = seq(15, 375, length = n + 1)
+  hues <- seq(15, 375, length = n + 1)
   hcl(h = hues, l = 65, c = 100)[1:n]
 }
 gg_color_hue(4)
 
-tax_pallet = c(brewer.pal(12, "Set3"), brewer.pal(8, "Dark2"))
+tax_pallet <- c(brewer.pal(12, "Set3"), brewer.pal(8, "Dark2"))
 other <- c(
   "#E3E6AD",
   "#F8D0A4",
@@ -482,7 +483,7 @@ meta_headers <- colnames(samples_metadata(MOFAmodel))
 gr_df <- samples_metadata(MOFAmodel)[, c(
   "pos",
   "fct1_clus",
-  "Clinical_score_(0-5)",
+  "Clinical score (0-5)",
   "RVVC_pos",
   "CST",
   "BV",
@@ -577,13 +578,14 @@ FM <- plot_data_heatmap2(
 #| fig-width: 11.5
 #| fig.height: 3
 # quartz(width = 11.5, height = 3, dpi = 100)
-plot_grid(
+B <- plot_grid(
   TR$gtable,
   MB$gtable,
   FM$gtable,
   nrow = 1,
   rel_widths = c(0.75, 0.9, 2)
 )
+B
 ```
 
 ```{r combine-heatmaps-h}
@@ -603,7 +605,10 @@ plot_grid(
 
 plot_data_heatmap has an interesting argument to “beautify” the heatmap: `denoise = TRUE`. Instead of plotting the (noisy) input data, we can plot the data reconstructed by the model, where noise has been removed:
 
+## bar plots
+
 ```{r facet-bar-function}
+#| code-fold: true
 # ============================================================
 # FUNCTION: gr.fun()
 # ============================================================
@@ -774,14 +779,14 @@ legend_height_cm <- function(leg) {
 # Dependencies:
 # ggplot2, cowplot/grid utilities
 # ============================================================
+# https://stackoverflow.com/questions/73711918/how-to-remove-majority-of-blank-space-from-get-legend
 get_legend.fun <- function(df, title, feature, id, colours, txt_size = 10) {
-  # https://stackoverflow.com/questions/73711918/how-to-remove-majority-of-blank-space-from-get-legend
   p <- ggplot() +
     geom_col(
       data = df,
       aes(fill = .data[[feature]], y = abundance, x = .data[[id]])
     ) +
-    scale_fill_manual(title, values = colours[unique(pull(df, feature))]) +
+    scale_fill_manual(title, values = colours) +
     guides(
       fill = guide_legend(
         override.aes = list(size = 2),
@@ -794,8 +799,8 @@ get_legend.fun <- function(df, title, feature, id, colours, txt_size = 10) {
       legend.background = element_blank(),
       legend.title = element_text(margin = margin(b = -0.1))
     )
-  l <- cowplot::get_legend(p)
-  return(l)
+
+  cowplot::get_legend(p)
 }
 #grid::grid.draw(c$legend[[1]])
 # ============================================================
@@ -873,7 +878,8 @@ Facet_bar.fun <- function(
   colours,
   x_axis = "sample",
   annot_col = NULL, #"Clinical score (0-5)",
-  strip_colours = NULL
+  strip_colours = NULL,
+  legend = "none"
 ) {
   # -------------------------------
   # Apply strip colours if provided
@@ -904,9 +910,10 @@ Facet_bar.fun <- function(
       geom_tile(
         aes(x = sample, y = 1.001, fill = .data[[annot_col]]),
         inherit.aes = FALSE,
+        show.legend = F,
         height = 0.03, #width = 0.9
       ),
-      scale_fill_manual(values = pal[[annot_col]]),
+      scale_fill_manual(values = pal[[annot_col]], name = NULL),
       guides(
         fill = guide_legend(
           override.aes = list(size = 2),
@@ -926,18 +933,25 @@ Facet_bar.fun <- function(
     aes(fill = .data[[fill]], y = abundance, x = .data[[x_axis]])
   ) +
     geom_bar(position = "fill", stat = "identity") +
-    theme_minimal() +
+    theme_minimal(base_size = 8) +
     coord_cartesian(expand = FALSE) +
-    scale_fill_manual(values = colours) +
-    #scale_x_discrete(drop = TRUE) +
-    #scale_x_discrete(limits = levels(df$sample),drop = TRUE) +
+    scale_fill_manual(values = colours, name = NULL) +
     scale_y_continuous(labels = scales::label_percent(scale = 100)) +
+    guides(
+      fill = guide_legend(
+        override.aes = list(size = 2),
+        #ncol = 4, byrow = FALSE,
+        keyheight = .4,
+        keywidth = .6
+      )
+    ) +
     theme(
       strip.background = element_rect(colour = "gray", fill = NA),
       panel.border = element_rect(colour = "gray", fill = NA),
       plot.margin = unit(c(0.1, 0, 0.2, 0), "cm"),
-      #axis.text.x = element_blank(),
-      axis.text.x = element_text(angle = 90, hjust = 1),
+      axis.text.x = element_blank(),
+      #strip.text = element_text(lineheight = 0.5),
+      strip.text.x = element_text(margin = margin(0.1, 0, 0.1, 0, "cm")),
       # axis.text.x = element_text(
       #   angle = 90,
       #   vjust = 0.5,
@@ -947,7 +961,14 @@ Facet_bar.fun <- function(
       # ),
       axis.title.y = element_blank(),
       axis.title.x = element_blank(),
-      legend.position = "none"
+      legend.spacing.y = unit(.1, 'cm'),
+      legend.box.spacing = unit(.1, 'cm'),
+      legend.key.spacing.y = unit(.1, 'cm'),
+      legend.text = element_text(
+        size = 8,
+        margin = margin(r = 0.3, l = 0.3, unit = "pt"),
+      ),
+      legend.position = legend
     ) +
     strip +
     annot
@@ -967,7 +988,9 @@ weights$Metagenomics <- weights$Metagenomics %>%
   mutate(feature = str_replace(feature, "_", " "))
 ```
 
+## 5. Prepp indivdual omics for barplot
 
+### prepp MB
 ```{r prepp-MB-data}
 # select samples
 MB_data <- MB_matrix %>%
@@ -987,6 +1010,7 @@ MB_data <- MB_data %>%
 MB_colours <- set_names(MB_colours$col, MB_colours$Pathway)
 ```
 
+### prepp MG
 ```{r prepp-MG-data}
 # select samples
 MG_data <- MG_matrix$data$strain %>%
@@ -1001,6 +1025,7 @@ new_names <- sub("_", " ", new_names) # remove strain id
 colnames(MG_data) <- new_names # Assign new names
 
 # get colpal for top weights
+# it has already colour for strain lvl, but you can also choose for species/genus level
 MG_hirarchy <- MG_hirarchy %>%
   arrange(desc(sum)) %>%
   mutate(species = factor(.$species, levels = unique(.$species))) %>%
@@ -1009,11 +1034,6 @@ MG_hirarchy <- MG_hirarchy %>%
 
 MG_colours <- set_names(MG_hirarchy$col, MG_hirarchy$strain)
 
-# you can choose if you want to include species by sum abundance or by alfabetical
-# dpending on if you use the levels() or just the order of n
-n_lvl <- MG_hirarchy$species %>% unique() %>% as.vector()
-n <- levels(MG_hirarchy$species)[1:20]
-
 top_feat <- pull(weights$Metagenomics, "feature")[1:20]
 new <- setdiff(top_feat, names(MG_colours))
 MG_colours <- set_names(
@@ -1021,196 +1041,15 @@ MG_colours <- set_names(
   c(names(MG_colours), c(new, "other"))
 )
 
+# you can choose if you want to include species by sum abundance or by alfabetical
+# dpending on if you use the levels() or just the order of n
+n_lvl <- MG_hirarchy$species %>% unique() %>% as.vector()
+n <- c(levels(MG_hirarchy$species)[1:20], new)
+
 # I have to get MG_colours to contain all of the taxa at species level in order to set factor levels or i have to apply other before
 ```
 
-```{r col-pal-taxa}
-#| eval: false
-##################
-# COLOUR PALLETS #
-##################
-#### colour pallet ####
-
-# "Lactobacillus crispatus" = "#148F77",
-# "Lactobacillus iners" = "#A3E4D7",
-# "Lactobacillus gasseri" = "#6D9F06",
-# "Lactobacillus jensenii" = "#4E7705",
-# "Lactobacillus acidophilus" = "#b4cb8c",
-# "Gardnerella vaginalis" = "#CC79A7", #"#7D3560",
-# "Fannyhessea vaginae" = "#EFB6D6", #"#E794C1",
-# "Streptococcus agalactiae" = "#FFD5AF",
-# "Limosilactobacillus portuensis" = "#F09163",
-# "Candida albicans" = "#8B0000",
-# "Ureaplasma parvum" = "#ff7f00",
-# "other" = "#8B8B8B",
-
-# "Sneathia vaginalis" = "#7786e9",
-
-# "Coriobacteriales bacterium DNF00809" = "#afb7ee",
-# "GGB3012 SGB4003" = "#8892d5",
-
-# "Staphylococcus aureus" = "#566be9",
-# "Prevotella bivia" = "#fecf44",
-# "Prevotella amnii" = "#dcb12e",
-# "Dialister micraerophilus" = "#ffe2c9",
-# "Aerococcus christensenii" = "#A569BD",
-# "Megasphaera lornae" = "#C17754"
-
-taxa_order.fun <- function(df) {
-  lvls <- names(pal_list)
-  gr_lvls <- lvls %>% paste0(., collapse = "|")
-  d <- df %>%
-    mutate(
-      gr_lvl = ifelse(
-        str_detect(feature, gr_lvls),
-        str_extract(feature, gr_lvls),
-        "other"
-      )
-    ) %>%
-    group_by(gr_lvl) %>%
-    arrange(desc(abundance)) %>%
-    select(gr_lvl, feature) %>%
-    ungroup() %>%
-    unique() %>%
-    mutate(gr_lvl = factor(.$gr_lvl, levels = lvls)) %>%
-    arrange(gr_lvl) %>%
-    nest(.by = "gr_lvl") %>%
-    mutate(
-      data = map2(
-        gr_lvl,
-        data,
-        ~ if (.x == "other") arrange(.y, as.character(feature)) else .y
-      )
-    ) %>%
-    unnest(cols = c(data))
-
-  col <- d %>%
-    group_by(gr_lvl) %>%
-    #mutate(col = list(pal_list[[cur_group_id()]])) %>%
-    mutate(col = pal_list[[cur_group_id()]][1:n()]) %>%
-    ungroup() %>%
-    select(-gr_lvl) %>%
-    deframe()
-
-  return(col)
-}
-
-pal_list <- list(
-  Lactobacillus = c(
-    "#148F77",
-    "#A3E4D7",
-    "#6D9F06",
-    "#4E7705",
-    "#b4cb8c",
-    "#6e9b20",
-    "#6ba705",
-    "#50701a"
-  ),
-  Gardnerella = c(
-    "#cc79a7",
-    "#8a3c4eff",
-    "#d45265ff",
-    "#f07487ff",
-    "#f1a6b1",
-    "#f5b4be",
-    "#f9d1d7"
-  ),
-  Fannyhessea = c("#EFB6D6", "#E794C1"),
-  Prevotella = colorRampPalette(colors = c("#e06806ff", "#eebc89ff"))(24),
-  # Prevotella = c(
-  #   "#e06806ff",
-  #   "#e2771fff",
-  #   "#e99a59ff",
-  #   "#f0c497ff",
-  #   "#eebc89ff"
-  # ),
-  Candida = c("#8B0000", "#c61717", "#d84141", "#ef7575"),
-  Megasphaera = c("#C17754", "#c7927a"),
-  Sneathia = c("#5b97e4", "#77bbe9"),
-  Aerococcus = c("#b1436d"),
-  Limosilactobacillus = colorRampPalette(colors = c("#A569BD", "#d3b1e1"))(5),
-  Coriobacteriales = c("#afb7ee"),
-
-  Staphylococcus = c("#566be9", "#909ff5", "#b9c3f8"),
-  Alloscardovia = c("#d771b7", "#e69fdf"),
-
-  Streptococcus = colorRampPalette(colors = c("#fac526", "#ffe9a7"))(14), #c("#fecf44", "#fac526", "#dcb12e") c("#FFD5AF"),
-  Dialister = c("#ffbb96", "#ffe2c9"),
-  Ureaplasma = c("#ff7f00", "#fead5b"),
-  Lacticaseibacillus = c("#8892d5", "#afb7ea"),
-  Bifidobacterium = colorRampPalette(colors = c("#59a14f", "#b5ebaeff"))(4),
-
-  #Veillonellaceae = c(),
-  #"GGB3012 SGB4003" = ,
-  GGB = c("#fecf44", "#fac526", "#dcb12e"), #c("#59a14f", "#77a371ff", "#71a38cff", "#9cd694ff", "#b5ebaeff"),
-  other = c("gray")
-  # other = c(
-  #   "#E3E6AD",
-  #   "#F8D0A4",
-  #   "#c4ce96",
-  #   "#9aacce",
-  #   "#e1caff",
-  #   "#abc5bf",
-  #   "#ffffd4",
-  #   "#c0a2c1",
-  #   "#c8ffd5",
-  #   "#c8ffd5",
-  #   "#afb7ee",
-  #   "#ffc8d9",
-  #   "#ffc8d9",
-  #   "#e7b993",
-  #   "#c8ffd5",
-  #   "#c4cea9",
-  #   "#a1b37d",
-  #   "#a6cca7",
-  #   "#d1b9ee",
-  #   "#88c29c",
-  #   "#fdcc8a",
-  #   "#91c6f7",
-  #   "#f5f8bd",
-  #   "#8db1c5",
-  #   "#fab0aa",
-  #   "#7cb6b6",
-  #   "#96f3eb",
-  #   "#6ececc"
-  # )
-)
-
-# top taxa
-top_taxa <- omics_tbl$df$Metagenomics %>%
-  mutate(genus = str_replace(species, " \\w+$", "")) %>%
-  summarise(sum = sum(abundance), .by = c("genus", "feature")) %>%
-  arrange(desc(sum)) %>%
-  nest(., .by = "genus") %>%
-  .[1:20, ]
-
-# use the information above to build a pallet for the 20 top abundant genus
-
-# top 20 genus colour pallet
-MG_colours <- omics_tbl$df$Metagenomics %>%
-  # Non-abundant taxa to "other":
-  mutate(
-    feature = ifelse(
-      grepl(paste0(top_taxa$genus, collapse = "|"), .$feature),
-      .$feature,
-      "other"
-    )
-  ) %>%
-  # gets colour for each taxa
-  taxa_order.fun(.)
-
-
-# top 20 features by factor weight
-# get colpal for top weights
-top_feat <- pull(weights$Metagenomics, "feature")[1:20]
-new <- setdiff(top_feat, names(MG_colours))
-old <- setdiff(names(MG_colours), top_feat)
-top_colMG <- set_names(
-  c(old, new),
-  c(MG_colours[old], tax_pallet[1:length(new)])
-)
-```
-
+### prepp FM
 ```{r prepp-FM-data}
 # select samples:
 FM_data <- FM_data %>%
@@ -1269,7 +1108,9 @@ knitr::kable(superclass_counts[[1]], caption = "Superclass 1", digits = 2)
 knitr::kable(superclass_counts[[2]], caption = "Superclass 2", digits = 2)
 ```
 
+## 6. Combine all omics into one tibble
 ```{r omics-tibble}
+#| code-fold: true
 # ============================================================
 # 1. STORE BOTH OMICS IN A LIST (LONG FORMAT)
 # ============================================================
@@ -1307,6 +1148,7 @@ omic_data$Metagenomics <- MG_data %>%
   ) %>%
   # create species column
   mutate(species = str_replace(strain, " \\d", "")) %>%
+  mutate(genus = str_replace(strain, " \\w+$", "")) %>%
   # set low abundant species to "other"
   mutate(feature = ifelse(.$species %in% n, .$species, "other")) %>%
   # fix order of taxa
@@ -1370,8 +1212,8 @@ omics_tbl <- omics_tbl %>%
               all_of("feature"),
               ~ factor(.x, levels = names(colours))
             )
-          ) #%>%
-        # arrange(match(feature, names(colours)))
+          ) %>%
+          arrange(match(feature, names(colours)))
       }
     )
   )
@@ -1391,12 +1233,14 @@ omics_tbl <- omics_tbl %>%
   mutate(df_top = set_names(df_top, omic))
 ```
 
+## Plot barplot per omic
+
 ```{r plots}
 # ============================================================
 # 5. GENERATE BARPLOTS USING pmap()
 # ============================================================
 # ---- All features ----
-plots_top <- omics_tbl %>%
+plots_all <- omics_tbl %>%
   mutate(
     plot = pmap(
       list(df, feature, colours),
@@ -1412,10 +1256,228 @@ plots_top <- omics_tbl %>%
       }
     )
   )
-plots_top$plot
+plots_all$plot
+```
 
+### Create sub-grouped legend
+
+```{r get-subgroup-legend}
+# ---- Legend ----
+# ------------------------------------------------------------
+# Function: create legends for one omic
+# ------------------------------------------------------------
+# df <- plots_all$df_top$Functional
+make_legends <- function(df, meta_group, colours) {
+  df %>%
+    mutate(meta_group_var = .[[meta_group]]) %>%
+    # nest subgroup by meta group:
+    nest(.by = meta_group_var) %>%
+
+    mutate(
+      legend = pmap(
+        list(data, meta_group_var),
+        function(df_sub, group_name) {
+          # map original colours to labels
+          legend_colours <- df_sub %>%
+            distinct(feature, feature_label) %>%
+            {
+              setNames(
+                colours[.$feature],
+                .$feature_label
+              )
+            }
+          get_legend.fun(
+            df = df_sub,
+            title = group_name,
+            feature = "feature_label",
+            id = "sample",
+            colours = legend_colours,
+            txt_size = 8
+          )
+        }
+      )
+    ) %>%
+    # get height of indvcidual meta groups:
+    mutate(
+      height = map_dbl(
+        legend,
+        ~ as.numeric(legend_height_cm(.x))
+      ),
+      rel_height = height / sum(height)
+    )
+}
+
+# ------------------------------------------------------------
+# Function: combine legends into one grob
+# ------------------------------------------------------------
+combine_legends <- function(legend_df) {
+  plot_grid(
+    plotlist = legend_df$legend,
+    ncol = 1,
+    rel_heights = legend_df$rel_height,
+    align = "v"
+  )
+}
+
+# ------------------------------------------------------------
+# Define which metadata column belongs to each omic
+# ------------------------------------------------------------
+meta_map <- c(
+  Functional = "Superclass2",
+  Metabolomics = "MB_Class2",
+  Metagenomics = "genus"
+)
+
+# ------------------------------------------------------------
+# Generate legend plots
+# ------------------------------------------------------------
+# shorten name
+# df <- omics_tbl$df_top$Functional %>% filter(feature == "superpathway of N-acetylglucosamine, N-acetylmannosamine and N-acetylneuraminate degradation")
+preprocess_legend_df <- function(df, omic) {
+  df <- df %>%
+    mutate(feature_label = feature)
+  if (omic == "Functional") {
+    df <- df %>%
+      mutate(
+        feature_label = str_replace(
+          feature,
+          "^(superpathway of [^,]+),.*",
+          "\\1"
+        )
+      )
+  }
+  df
+}
+
+plots_all <- plots_all %>%
+  mutate(
+    meta_gr = meta_map[omic],
+    legend_data = pmap(
+      list(df_top, meta_gr, colours, omic),
+      function(df, meta_group, colours, omic) {
+        df <- preprocess_legend_df(df, omic)
+        make_legends(
+          df = df,
+          meta_group = meta_group,
+          colours = colours
+        )
+      }
+    ),
+
+    legend_plot = map(
+      legend_data,
+      combine_legends
+    )
+  )
+
+plots_all$legend_plot$Functional
+#plots_all <- plots_all %>% select(omic, meta_gr, df, plot, legend_plot)
+plots_all
+```
+
+### Combine barplot + legend
+
+```{r all-FM-plot}
+#| fig.width: 6
+#| fig.height: 4
+# quartz(width = 6, height = 4, dpi = 120)
+plot_grid(
+  plots_all$plot$Functional,
+  plots_all$legend_plot$Functional,
+  rel_widths = c(0.4, 1.1)
+) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+```
+
+```{r all-MB-plot}
+#| fig.width: 3.5
+#| fig.height: 4
+# quartz(width = 3.5, height = 4, dpi = 120)
+plot_grid(
+  plots_all$plot$Metabolomics,
+  plots_all$legend_plot$Metabolomics,
+  rel_widths = c(1, 1.2)
+) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+```
+
+```{r all-MG-plot}
+#| fig.width: 2.9
+#| fig.height: 4
+# quartz(width = 2.9, height = 4, dpi = 120)
+plot_grid(
+  plots_all$plot$Metagenomics,
+  plots_all$legend_plot$Metagenomics,
+  rel_widths = c(1, 0.8)
+) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+```
+
+```{r old-legend-chunk}
+#| eval: false
+#| code-fold: true
+# old working version of legend, remove when above has been confirmed
+meta_group <- c("Superclass2", "MB_Class2", "genus")
+# df <- omics_tbl$df_top$Metagenomics
+plots_top <- plots_top %>%
+  mutate(meta_gr = meta_group) %>%
+  mutate(
+    legend_data = pmap(
+      list(df_top, meta_gr, colours),
+      function(df, meta_gr, colours) {
+        df %>%
+          # ensure grouping column exists
+          mutate(meta_group_var = .[[meta_gr]]) %>%
+          nest(.by = meta_group_var) %>%
+
+          # get height of indvcidual meta groups
+          mutate(n_s = map_int(data, ~ n_distinct(.x[["feature"]]))) %>%
+
+          # build legend per group
+          mutate(
+            legend = pmap(
+              list(data, meta_group_var),
+              function(df_sub, group_name) {
+                get_legend.fun(
+                  df = df_sub,
+                  title = group_name,
+                  feature = "feature",
+                  id = "sample",
+                  colours = colours,
+                  txt_size = 8
+                )
+              }
+            )
+          ) %>%
+
+          # compute heights for stacking legends
+          mutate(
+            height = map_dbl(legend, ~ as.numeric(legend_height_cm(.x))),
+            rel_height = height / sum(height)
+          )
+      }
+    )
+  )
+plots_top$legend_data
+
+legend_plots <- plots_top %>%
+  mutate(
+    legend_plot = map(legend_data, function(x) {
+      plot_grid(
+        plotlist = x$legend,
+        ncol = 1,
+        rel_heights = x$rel_height,
+        align = "v"
+      )
+    })
+  )
+
+# quartz(width = 6, height = 4, dpi = 120)
+plot_grid(FM_fct1_bar, l, rel_widths = c(0.4, 1.1)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+plot_grid(FM_fct1_bar_top, l, rel_widths = c(0.4, 1.1)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+```
+
+```{r top-features}
+# quartz(width = 10.5, height = 6 )
 # ---- Top features ----
-plots_top <- omics_tbl %>%
+plots_top <- plots_all %>%
   mutate(
     plot = pmap(
       list(df_top, top, colours),
@@ -1431,33 +1493,75 @@ plots_top <- omics_tbl %>%
       }
     )
   )
-plots_top$plot
+plots_top
+```
 
+```{r top-FM-plot}
+#| fig.width: 6
+#| fig.height: 4
+# quartz(width = 4, height = 4, dpi = 120)
+C2 <- plot_grid(
+  plots_top$plot$Functional,
+  plots_all$legend_plot$Functional,
+  rel_widths = c(0.5, 1)
+) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+C2
+```
+
+```{r top-MB-plot}
+#| fig.width: 3.5
+#| fig.height: 4
+# quartz(width = 3.2, height = 4, dpi = 120)
+C3 <- plot_grid(
+  plots_top$plot$Metabolomics,
+  plots_all$legend_plot$Metabolomics,
+  rel_widths = c(0.7, 1)
+) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+C3
+```
+
+```{r top-MG-plot}
+#| fig.width: 2.9
+#| fig.height: 4
+# quartz(width = 2.6, height = 4, dpi = 120)
+C4 <- plot_grid(
+  plots_top$plot$Metagenomics,
+  plots_all$legend_plot$Metagenomics,
+  rel_widths = c(0.43, 0.42)
+) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
+C4
+```
+
+```{r individual-samples}
+#| fig.width: 9.4
+#| fig.height: 3.5
 # ---- All samples ----
-plots_top <- omics_tbl %>%
+plots_all <- plots_all %>%
   mutate(
-    plot = pmap(
-      list(df_top, colours),
+    plot_s = pmap(
+      list(df, colours),
       function(df, colours) {
         Facet_bar.fun(
           df = df, #mutate(df, sample = forcats::fct_relevel(sample, sample_order)),
           facet_var = "fct1_clus",
           fill = "feature",
           colours = colours,
-          #strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
+          strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
           x_axis = "sample",
-          #annot_col = "RVVC_pos"
+          annot_col = "RVVC_pos",
+          legend = "bottom"
         )
       }
     )
   )
-plots_top$plot$Metagenomics
+# quartz(width = 9.4, height = 3.5, dpi = 120)
+plots_all$plot_s$Metagenomics
 # df <- omics_tbl$df_top$Metagenomics
 
 # ---- All samples top ----
-plots_top <- omics_tbl %>%
+plots_top <- plots_top %>%
   mutate(
-    plot = pmap(
+    plot_s = pmap(
       list(df_top, colours),
       function(df, colours) {
         Facet_bar.fun(
@@ -1465,25 +1569,22 @@ plots_top <- omics_tbl %>%
           facet_var = "fct1_clus",
           fill = "feature",
           colours = colours,
-          #strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
+          strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
           x_axis = "sample",
           #annot_col = "RVVC_pos"
         )
       }
     )
   )
-plots_top$plot$Metagenomics
+plots_top$plot_s$Metagenomics
 
-# ============================================================
-# 6. COMBINE PLOTS
-# ============================================================
-plot_grid(
-  plotlist = plots_top,
-  ncol = 1
-)
+#plots_top <- plots_top %>% select(omic, meta_gr, plot, plot_s, legend_plot)
 ```
 
+## 7. MB line plots
+
 ```{r extra-plots}
+#| code-fold: true
 df_summary <- omics_tbl$df_top$Metabolomics %>%
   group_by(fct1_clus, feature, MB_Class3, MB_Class2, MB_Class1) %>%
   summarise(
@@ -1522,117 +1623,6 @@ ggplot(
   scale_color_manual(values = MB_colours)
 ```
 
-
-## 5. Plot MG barplots
-
-## 5. Plot FM barplots
-
-
-
-
-
-```{r plot-FM-barplot}
-#| fig.width: 6
-#| fig.height: 4
-#| eval: false
-# pivot longer and calculate perecentage for the 15 most abundant taxa
-df_long <- FM_data %>%
-  # 1) Remove unwanted pathways
-  filter(!pathway_id %in% c("UNMAPPED", "UNINTEGRATED")) %>%
-  # 2) Long format
-  pivot_longer(
-    cols = where(is.double),
-    names_to = "sample",
-    values_to = "abundance"
-  ) %>%
-  # 3) Re-normalize within each sample
-  mutate(
-    abundance = abundance / sum(abundance, na.rm = TRUE),
-    .by = "sample"
-  )
-
-FM_colours <- read_csv("../Results/Metagenomics/Functional_col_pal.csv")
-FM_colours <- set_names(FM_colours$col, FM_colours$Pathway)
-
-FM_df_ <- df_long %>%
-  left_join(
-    .,
-    select(meta, sample, RVVC_pos, `Clinical score (0-5)`, fct1_clus),
-    by = "sample"
-  ) %>%
-  # get right order of legend and x-axis by factor and arrange:
-  mutate(fct1_clus = factor(.$fct1_clus)) %>%
-  mutate(pathway = factor(.$pathway, levels = names(FM_colours))) %>%
-  arrange(match(pathway, names(FM_colours)))
-
-##########
-# LEGEND #
-##########
-meta_group <- "Superclass2"
-subgroup <- "pathway"
-c <- FM_df_ %>%
-  # filter only top 20 features to include in legend:
-  filter(pathway %in% pull(weights$Functional, "feature")[1:20]) %>%
-  {
-    . ->> FM_df_top
-  } %>%
-  nest(data = -sym(meta_group)) %>%
-  mutate(n_s = map_int(data, ~ n_distinct(.x$pathway))) %>%
-  # arrange(desc(n_s)) %>%
-  mutate(
-    legend = pmap(
-      list(data, !!sym(meta_group)),
-      ~ get_legend.fun(..1, ..2, "pathway", "sample", FM_colours, txt_size = 8)
-    )
-  ) %>%
-  mutate(
-    height = map_dbl(legend, ~ as.numeric(legend_height_cm(.)))
-  ) %>%
-  mutate(rel_height = height / sum(height))
-
-#############################
-# FUNCTIONAL META BAR PLOT #
-############################
-# quartz(width = 15, height = 11 )
-# all features
-FM_fct1_bar <- Facet_bar.fun(
-  FM_df_,
-  "fct1_clus",
-  fill = "pathway",
-  colours = FM_colours,
-  x_axis = "fct1_clus"
-)
-
-# only top 20 features for factor 1
-FM_fct1_bar_top <- Facet_bar.fun(
-  FM_df_top,
-  "fct1_clus",
-  fill = "pathway",
-  colours = FM_colours,
-  strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
-  x_axis = "fct1_clus"
-)
-
-l <- plot_grid(
-  plotlist = c$legend,
-  ncol = 1,
-  byrow = T,
-  rel_heights = c$rel_height,
-  rel_widths = c(1, 1),
-  align = "vh",
-  axis = "t"
-) # align = "hv",
-
-
-# quartz(width = 10.5, height = 6 )
-# plot_grid(bar, l, rel_widths = c(1, .6)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
-FM_fct1_bar
-
-# quartz(width = 6, height = 4, dpi = 120)
-plot_grid(FM_fct1_bar, l, rel_widths = c(0.4, 1.1)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
-plot_grid(FM_fct1_bar_top, l, rel_widths = c(0.4, 1.1)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
-```
-
 ```{r iners-only-samples}
 #| eval: false
 #| fig.width: 6
@@ -1658,134 +1648,59 @@ FM_fct1_bar_iners <- FM_df_top %>%
 FM_fct1_bar_iners
 ```
 
-```{r plot-MB-barplot}
-#| eval: false
-#| fig.width: 3.5
-#| fig.height: 4
-# pivot longer and calculate perecentage for the 15 most abundant taxa
-df_long <- MB_data %>%
-  rename(metabolite = "names") %>%
-  # 1) Long format
-  pivot_longer(
-    cols = where(is.double),
-    names_to = "sample",
-    values_to = "abundance"
-  )
+## 8. Combine plots
 
-MB_colours <- read_csv("../Results/Metagenomics/Metabolome_col_pal.csv")
-MB_colours <- set_names(MB_colours$col, MB_colours$Pathway)
+```{r combine-plot-A}
+#| fig-width: 13
+#| fig-height: 5
+# quartz(width = 13, height = 2.5, dpi = 110)
 
-MB_df_ <- df_long %>%
-  left_join(
-    .,
-    select(meta, sample, RVVC_pos, `Clinical score (0-5)`, fct1_clus),
-    by = "sample"
-  ) %>%
-  # get right order of legend and x-axis by factor and arrange:
-  mutate(fct1_clus = factor(.$fct1_clus)) %>%
-  mutate(metabolite = factor(.$metabolite, levels = names(MB_colours))) %>%
-  arrange(match(metabolite, names(MB_colours)))
+# quartz(width = 11.5, height = 4, dpi = 100)
 
-##########
-# LEGEND #
-##########
-meta_group <- "MB_Class2"
-subgroup <- "metabolite"
-c <- MB_df_ %>%
-  # filter only top 20 features to include in legend:
-  filter(metabolite %in% pull(weights$Metabolomics, "feature")[1:20]) %>%
-  {
-    . ->> MB_df_top
-  } %>%
-  nest(data = -sym(meta_group)) %>%
-  mutate(n_s = map_int(data, ~ n_distinct(.x$metabolite))) %>%
-  # arrange(desc(n_s)) %>%
-  mutate(
-    legend = pmap(
-      list(data, !!sym(meta_group)),
-      ~ get_legend.fun(
-        ..1,
-        ..2,
-        "metabolite",
-        "sample",
-        MB_colours,
-        txt_size = 8
-      )
-    )
-  ) %>%
-  mutate(
-    height = map_dbl(legend, ~ as.numeric(legend_height_cm(.)))
-  ) %>%
-  mutate(rel_height = height / sum(height))
-
-#############################
-# FUNCTIONAL META BAR PLOT #
-############################
-# quartz(width = 15, height = 11 )
-# all features
-MB_fct1_bar <- Facet_bar.fun(
-  MB_df_,
-  "fct1_clus",
-  fill = "metabolite",
-  colours = MB_colours,
-  x_axis = "fct1_clus"
+A <- plot_grid(
+  A1,
+  plots_all$plot_s$Metagenomics,
+  rel_widths = c(0.25, 0.75),
+  nrow = 1
 )
-
-# only top 20 features for factor 1
-MB_fct1_bar_top <- Facet_bar.fun(
-  MB_df_top,
-  "fct1_clus",
-  fill = "metabolite",
-  colours = MB_colours,
-  strip_colours = c("#a4d19b", "#d5edbe", "#ffc99e", "#ffe3c1"),
-  x_axis = "fct1_clus"
+# C <- plot_grid(NULL, C3, C2, C4, rel_widths = c(0.15, 0.29, 0.36, 0.24), nrow = 1) plots_top$plot$Metagenomics
+C <- plot_grid(
+  NULL,
+  C3,
+  C2 + theme(plot.margin = unit(c(0, 0.3, 0, -0.2), "cm")),
+  plots_top$plot$Metagenomics,
+  NULL,
+  rel_widths = c(0.18, 0.28, 0.37, 0.13, 0.07),
+  nrow = 1
 )
-
-l <- plot_grid(
-  plotlist = c$legend,
-  ncol = 1,
-  byrow = T,
-  rel_heights = c$rel_height,
-  rel_widths = c(1, 1),
-  align = "vh",
-  axis = "t"
-) # align = "hv",
-
-
-# quartz(width = 10.5, height = 6 )
-# plot_grid(bar, l, rel_widths = c(1, .6)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
-MB_fct1_bar
-
-# quartz(width = 3.5, height = 4, dpi = 120)
-plot_grid(MB_fct1_bar, l, rel_widths = c(1, 1.2)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
-plot_grid(MB_fct1_bar_top, l, rel_widths = c(1, 1.2)) #plot_grid(l,NULL, nrow=2, rel_heights = c(1,.3))
 ```
 
-
-## 6. Combine plots
-
 ```{r combine-plots}
-#| fig.width: 5.5
-#| fig.height: 4
-#| eval: false
+#| fig.width: 11.5
+#| fig.height: 9
 #############################
 # COMBINE ALL FIGURE PANELS #
 #############################
 # quartz(width = 5.5, height = 4, dpi = 150)
+
+# quartz(width = 11.5, height = 9, dpi = 100)
+
 Figure3 <- plot_grid(
   A,
   B,
-  ncol = 1,
-  rel_heights = c(1, 1),
-  labels = c('A', 'B')
+  C,
+  rel_heights = c(0.27, 0.33, 0.39),
+  labels = c('A', 'B', 'C'),
+  ncol = 1
 )
+
 ggsave(
-  "./Figures/Figure3.pdf",
-  Figure1,
-  width = 5.5,
-  height = 4,
+  "./Figures/Figure3.png",
+  Figure3,
+  width = 11.5,
+  height = 9,
   bg = "white",
-  dpi = 1000
+  dpi = 600
 )
 
 Figure3
