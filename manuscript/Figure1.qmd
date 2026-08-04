@@ -82,14 +82,17 @@ samples_metadata(MOFAmodel) <- samples_metadata(MOFAmodel)[, c(
 
 ```{r model-overview}
 #| fig-width: 6
-#| fig-height: 3
+#| fig-height: 1.6
 # inspect the model:
 ovw <- plot_data_overview(MOFAmodel) +
   #theme_bw(base_size = 15 / .pt) +
+  labs(tag = "Samples") +
   theme(
-    plot.margin = unit(c(-0.2, -0.2, 0.1, 0.1), "cm"),
+    plot.tag.position = c(0.65, 0.97),
+    plot.tag = element_text(colour = "#626262"),
+    plot.margin = unit(c(-0, -0.2, 0.1, 0.15), "cm"),
     axis.text.y = element_text(color = "#636363"),
-    text = element_text(size = 7)
+    text = element_text(size = 8)
   ) + #  #EC645A, #CD3B8E, #994E95
   scale_fill_manual(
     values = c("#CC79A7", "#D55E00", "#CD3B8E", "gray", "#E69F00"),
@@ -104,10 +107,10 @@ ovw
 ```{r variance-explained}
 #| warning: false
 #| message: false
-#| fig-width: 9.5
-#| fig-height: 3
+#| fig-width: 5.5
+#| fig-height: 1.6
 p1 <- plot_variance_explained(MOFAmodel, plot_total = TRUE)[[2]]
-p2 <- plot_variance_explained(MOFAmodel, factors = 1:9)
+p2 <- plot_variance_explained(MOFAmodel, factors = 1:10)
 
 #+
 #theme(axis.text.x = element_text(angle = 45, hjust = 0.8, vjust = 0.9))
@@ -120,8 +123,11 @@ p2$layers[[1]]$aes_params$linewidth <- 0.1
 
 p1 <- p1 +
   coord_flip() +
+  labs(tag = "Variance explained") +
   theme(
-    text = element_text(size = 7),
+    plot.tag.position = c(0.5, 0.97),
+    plot.tag = element_text(colour = "#626262"),
+    text = element_text(size = 8),
     axis.text.y = element_blank(),
     axis.ticks.y = element_blank(),
     axis.line.x = element_line(linewidth = 0.2, colour = "#636363"),
@@ -129,27 +135,31 @@ p1 <- p1 +
     plot.margin = unit(c(0, 0.1, 0, -0.3), "cm")
   )
 p2 <- p2 +
-  coord_flip() +
+  coord_flip() + # clip = "off"
+  labs(tag = "Factors") +
   guides(fill = guide_colorbar(title = "", barwidth = 7, barheight = 0.3)) +
   theme(
-    text = element_text(size = 7),
-    legend.position = c(0.5, 1.09), # 👈 just above panel, tight
+    plot.tag.position = c(0.5, 0.97),
+    plot.tag = element_text(colour = "#626262"),
+    text = element_text(size = 8),
+    legend.position = c(0.5, 1.2), # 👈 just above panel, tight
     legend.direction = "horizontal",
-    legend.text = element_text(size = 6),
+    legend.text = element_text(size = 5),
     legend.title = element_text(size = 6),
     legend.text.position = "top",
     legend.margin = margin(0, 0, -0, 0), # moves the legend box
     legend.box.margin = margin(-0, 0, -0, -0.3)
   ) + # moves the legend) +
   theme(axis.text.y = element_blank()) +
-  theme(plot.margin = unit(c(0, 0, 0, -0.3), "cm")) +
+  theme(plot.margin = unit(c(0.2, 0, 0, -0.3), "cm")) +
   scale_y_discrete(labels = 1:10) +
   scale_fill_gradientn(
     colors = c("gray97", "darkblue"),
     labels = scales::label_number(suffix = "%") # 👈 THIS is the key
-  )
+  ) #+
+#annotate("text", x = 5.5, y = 6, label = "Factors", colour = "gray")
 
-# quartz(width = 6, height = 2)
+# quartz(width = 5.5, height = 2.1)
 B <- plot_grid(plotlist = list(ovw, p2, p1), nrow = 1, align = c("h"))
 B
 # p$layers[[1]]$aes_params$alpha
@@ -201,7 +211,7 @@ ve_df %>%
 
 ```{r combine-plots}
 #| fig.width: 5.5
-#| fig.height: 4
+#| fig.height: 3.5
 #############################
 # COMBINE ALL FIGURE PANELS #
 #############################
@@ -210,16 +220,17 @@ Figure1 <- plot_grid(
   g,
   B,
   ncol = 1,
-  rel_heights = c(1, 1),
+  rel_heights = c(1, 0.75),
+  label_y = c(0.97, 1),
   labels = c('A', 'B')
 )
 ggsave(
-  "./Figures/Figure1.pdf",
+  "./Figures/Figure1.png",
   Figure1,
   width = 5.5,
-  height = 4,
+  height = 3.5,
   bg = "white",
-  dpi = 1000
+  dpi = 600
 )
 
 Figure1
