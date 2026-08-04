@@ -1,0 +1,252 @@
+---
+title: "Suppl. Figure 1"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+---
+## 1. Libraries and global settings
+
+```{r libraries}
+#| code-fold: true
+#| output: false
+#| warning: false
+#| message: false
+library(MOFA2)
+library(tidyverse)
+library(readxl)
+library(RColorBrewer)
+library(ggpubr)
+library(patchwork)
+library(cowplot)
+
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/manuscript")
+
+select <- dplyr::select
+map <- purrr::map
+rename <- dplyr::rename
+```
+
+
+```{r load-data}
+# meta data
+comb_meta_path <- "../Results/Combined_gr_meta_data.csv"
+meta <- read_csv(comb_meta_path) %>%
+  #rename(sample = "svamp_ID") %>%
+  mutate(across(2:27, ~ factor(.x)))
+
+
+# colour pallet
+pal <- list(
+  "Clinical_score_(0-5)" = brewer.pal(6, name = "Reds"),
+  RVVC_pos = c(
+    "#A6CEE3",
+    "#1F78B4",
+    "#e490c4ff",
+    "#c12d88ff"
+  )
+)
+```
+
+## 2. Load trained MOFA model
+We load the model with the highest elbo score
+
+```{r load-MOFA-model}
+#| eval: true
+#| include: true
+#| warning: false
+#| message: false
+#| tbl-colwidths: [60,40]
+elbo_table <- read_csv("../Results/MOFA/elbo_table_noS84_1e-6_57MG.csv")
+knitr::kable(elbo_table)
+best_seed <- elbo_table$seed[which.max(abs(elbo_table$elbo))]
+
+MOFAmodel <- load_model(
+  paste0("../Results/MOFA/MOFA_allBL_noS84_1e-6_57MG_seed_", best_seed, ".hdf5")
+)
+
+# add meta data to model
+samples_metadata(MOFAmodel) <- samples_metadata(MOFAmodel)[, c(
+  "sample",
+  "group"
+)] %>%
+  left_join(meta, by = c("sample"))
+```
+
+```{r test-varince-between-groups}
+#| fig-width: 13.5
+#| fig-height: 6
+factors <- get_factors(MOFAmodel, as.data.frame = TRUE)
+factors <- factors %>%
+  as_tibble() %>%
+  select(-group) %>%
+  left_join(meta, by = "sample") %>%
+  filter(grepl(paste0("Factor", 1:10, "$", collapse = "|"), .$factor))
+
+plot_factor_violins <- function(data, group_var, reff = NULL, comparisons) {
+  p <- ggplot(
+    data,
+    aes(x = .data[[group_var]], y = value, fill = .data[[group_var]])
+  ) +
+    geom_violin(trim = F) +
+    #geom_point() +
+    geom_boxplot(
+      width = 0.1,
+      outlier.shape = NULL,
+      outlier.size = 0.5,
+      box.linewidth = 0.5
+    ) +
+    facet_wrap(~factor, scales = "free_y", nrow = 1) +
+    #facet_grid(rows = vars(RVVC_pos), cols = vars(factor), scales = "free", space = "free") +
+    labs(
+      x = "Groups",
+      y = "Factor value"
+    ) +
+    theme_classic(base_size = 12) +
+    scale_fill_manual(values = pal[[group_var]]) +
+    theme(
+      axis.title = element_blank(),
+      strip.text = element_text(size = 11),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    )
+  # Add stats if provided
+  #if (!is.null(comparisons)) {
+  p <- p +
+    stat_compare_means(
+      ref.group = reff,
+      vjust = 1.8,
+      label.y = Inf,
+      size = 4,
+      comparisons = comparisons,
+      label = "p.signif",
+      method = "wilcox.test"
+    ) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+  #}
+  return(p)
+}
+
+my_comparisons <- list(
+  list(c("RVVC_pos", "Control_neg")),
+  list(c("0", "5"), c("4", "5"))
+  #list( c("0", "1-3"), c("0", "4-5") )
+)
+
+# quartz(width = 15, height = 6)
+cols <- c("RVVC_pos", "Clinical_score_(0-5)")
+reff <- c("Control_neg", "0")
+update_geom_defaults("violin", aes(linewidth = 0))
+plots_f5 <- map2(
+  cols,
+  reff, # my_comparisons,
+  ~ plot_factor_violins(
+    data = filter(
+      factors,
+      grepl(paste0("Factor", 1:5, "$", collapse = "|"), factors$factor)
+    ), # factors,
+    group_var = .x,
+    reff = .y,
+    comparisons = NULL
+  )
+)
+p1 <- wrap_plots(plots_f5, ncol = 1, axis_titles = "collect")
+p1
+```
+
+```{r}
+#| fig-width: 13.5
+#| fig-height: 6
+plots_f9 <- map2(
+  cols,
+  reff, # my_comparisons,
+  ~ plot_factor_violins(
+    data = filter(
+      factors,
+      grepl(paste0("Factor", 6:10, "$", collapse = "|"), factors$factor)
+    ), # factors,
+    group_var = .x,
+    reff = .y,
+    comparisons = NULL
+  )
+)
+# quartz(width = 2.7*5, height = 6, dpi = 150)
+p2 <- wrap_plots(plots_f9, ncol = 1, axis_titles = "collect")
+# p2 <- plot_grid(p2, NULL, ncol = 2, rel_widths = c(0.81, 0.19)) # for nine factors
+
+p2
+```
+
+```{r combine-plots}
+#| fig-width: 13.5
+#| fig-height: 13
+
+# quartz(width = 2.7*5, height = 13, dpi = 100)
+FigS1 <- plot_grid(p1, p2, ncol = 1, align = "l")
+
+ggsave(
+  paste0("./Figures/FigureS1_.png"),
+  FigS1,
+  width = 13.5,
+  height = 13,
+  dpi = 600
+)
+FigS1
+```
+
+
+```{r}
+#| eval: false
+# code used to check number of samples per timepoint that had positive culturing
+# this was in relation to planning the fluconazole resistance mutations project
+Clin_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp_FINAL.xlsx"
+
+# meta data
+Clin_data <- read_xlsx(Clin_path, sheet = "Metadata", na = "na")
+
+Clin_data <- Clin_data %>%
+  mutate(
+    timepoint = case_when(
+      is.na(svamp_ID) ~ NA_character_,
+      !str_detect(svamp_ID, "_") ~ "BL", # no "_" → baseline
+      str_detect(svamp_ID, "_BL$") ~ "BL",
+      str_detect(svamp_ID, "_1W$") ~ "1W",
+      str_detect(svamp_ID, "_3M$") ~ "3M",
+      str_detect(svamp_ID, "_6M$") ~ "6M",
+      TRUE ~ NA_character_
+    )
+  )
+
+table(Clin_data$timepoint)
+table(Clin_data$group_longitudinal)
+table(Clin_data$`Fungal culture: Non-albicans candida spp. (y/n)`)
+table(Clin_data$`Fungal culture: C. albicans (y/n)`)
+
+Clin_longitud <- Clin_data %>%
+  filter(str_detect(svamp_ID, "_BL")) %>%
+  filter(is.na(group_longitudinal))
+table(Clin_longitud$group_longitudinal)
+
+Clin_BL <- Clin_data %>%
+  filter(str_detect(svamp_ID, "_BL|^[^_]+$"))
+table(Clin_BL$`Recurring fungal infections > 2/year (y/n)`)
+
+Clin_cross <- Clin_data %>%
+  filter(!str_detect(svamp_ID, "_"))
+table(Clin_cross$`Recurring fungal infections > 2/year (y/n)`)
+
+Clin_pos <- Clin_data %>%
+  filter(
+    `Fungal culture: C. albicans (y/n)` == "1" |
+      `Fungal culture: Non-albicans candida spp. (y/n)` == "1"
+  )
+
+table(Clin_pos$timepoint)
+```
