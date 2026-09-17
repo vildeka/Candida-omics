@@ -11,8 +11,6 @@ format:
     code-tools:
       source: true
       toggle: true
-params:
-  sparse: false
 ---
 
 
@@ -51,6 +49,8 @@ library(RColorBrewer)
 library(paletteer)
 
 library(RaMP)
+# BiocManager::install("BiocFileCache")
+# remotes::install_github("ncats/RAMP-DB")
 
 # setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
 
@@ -65,7 +65,7 @@ rename <- dplyr::rename
 # COLOUR PALLETS #
 ##################
 #### colour pallet ####
-RVVC_pal = c("#A6CEE3", "#1F78B4", "#e490c4ff", "#c12d88ff")
+RVVC_pal <- c("#A6CEE3", "#1F78B4", "#e490c4ff", "#c12d88ff")
 
 pal_list <- list(
   Lactobacillus <- c(
@@ -153,7 +153,7 @@ This section contains reusable helper functions used throughout the downstream v
 # ============================================================
 # default ggplot2 pallet:
 gg_color_hue <- function(n) {
-  hues = seq(15, 375, length = n + 1)
+  hues <- seq(15, 375, length = n + 1)
   hcl(h = hues, l = 65, c = 100)[1:n]
 }
 # gg_color_hue(10)
@@ -416,10 +416,19 @@ s_col <- c(
   "#3fc1d8",
   "#B3B3B3",
   "#FF7F00",
-  "#FFFF33",
-  "#A65628",
-  "#F781BF"
+  "#ecec6d",
+  "#F781BF",
+  "#1B9E77",
+  "#db7425",
+  "#8071cd",
+  "#d65296",
+  "#a8653f"
+  # "#a560ff",
+  # "#f44dc8",
+  # "#8d085c",
+  # "#498962"
 )
+
 e_col <- c(
   "#CBD5E8",
   "#FFF2AE",
@@ -436,8 +445,16 @@ e_col <- c(
   "#CCCCCC",
   "#FED9A6",
   "#FFFFCC",
-  "#E5D8BD",
-  "#FDDAEC"
+  "#FDDAEC",
+  "#a9d6c8",
+  "#ffcca6",
+  "#cac7e8",
+  "#e2bbcf",
+  "#E5D8BD"
+  # "#ddc3ff",
+  # "#f8c2ea",
+  # "#e2a1ca",
+  # "#b4d7c1"
 )
 
 #### function ####
@@ -779,10 +796,10 @@ meta_gr <- read_csv(comb_meta_path) %>%
   #rename(sample = "svamp_ID") %>%
   mutate(across(2:27, ~ factor(.x)))
 
-MG_path <- "../Results/MixOmic/Metageonome_vagswab_CLR_transformed.RDS"
+MG_path <- "../Results/MixOmic/Metageonome_vagswab_CLR_transformed_1e-6.RDS"
 MG_matrix <- readRDS(MG_path)
 
-FM_path <- "../Tidy_data/Metagenomics/Functional_annotation_relative_abundance_filtered.csv"
+FM_path <- "../Tidy_data/Metagenomics/Functional/Functional_annotation_relative_abundance_filtered.csv"
 FM_matrix <- read_csv(FM_path)
 
 MB_path <- "../Results/MixOmic/Metabolom_Normalized.csv"
@@ -799,6 +816,7 @@ MG_data <- MG_matrix$data$strain %>%
   filter(sample %in% m$sample[m$at_least_two & m$all_BL])
 
 FM_data <- FM_matrix[1:115, ] %>%
+  filter(level == "community_lvl") %>%
   select(Pathway, any_of(m$sample[m$at_least_two & m$all_BL]))
 
 MB_data <- MB_matrix %>%
@@ -813,6 +831,7 @@ Samples missing in one layer:
 
 ```{r color-pallet}
 #| code-fold: true
+#colors
 #colors
 group.colors <- c(
   "Lactobacillus crispatus" = "#148F77",
@@ -840,6 +859,134 @@ group.colors <- c(
   "Aerococcus christensenii" = "#A569BD",
   "Megasphaera lornae" = "#C17754"
 )
+pal_list <- list(
+  Lactobacillus = c(
+    "#148F77",
+    "#A3E4D7",
+    "#6D9F06",
+    "#4E7705",
+    "#b4cb8c",
+    "#6e9b20",
+    "#6ba705",
+    "#50701a"
+  ),
+  Gardnerella = c(
+    "#8a3c4eff",
+    "#cc79a7",
+    "#d45265ff",
+    "#f07487ff",
+    "#f1a6b1",
+    "#f5b4be",
+    "#f9d1d7"
+  ),
+  Fannyhessea = c("#EFB6D6", "#E794C1"),
+  Prevotella = colorRampPalette(colors = c("#e06806ff", "#eebc89ff"))(24),
+  # Prevotella = c(
+  #   "#e06806ff",
+  #   "#e2771fff",
+  #   "#e99a59ff",
+  #   "#f0c497ff",
+  #   "#eebc89ff"
+  # ),
+  Candida = c("#8B0000", "#c61717", "#d84141", "#ef7575"),
+  Megasphaera = c("#C17754", "#c7927a"),
+  Sneathia = c("#5b97e4", "#77bbe9"),
+  Aerococcus = c("#b1436d"),
+  Limosilactobacillus = colorRampPalette(colors = c("#A569BD", "#d3b1e1"))(5),
+  Coriobacteriales = c("#afb7ee"),
+
+  Staphylococcus = c("#566be9", "#909ff5", "#b9c3f8"),
+  Alloscardovia = c("#d84eac", "#e69fdf"),
+
+  Streptococcus = colorRampPalette(colors = c("#f9f034", "#f5f2b0"))(14), #c("#fecf44", "#fac526", "#dcb12e") c("#FFD5AF"),
+  Dialister = c("#ffbb96", "#ffe2c9"),
+  Ureaplasma = c("#ff7f00", "#fead5b"),
+  Lacticaseibacillus = c("#8892d5", "#afb7ea"),
+  Bifidobacterium = colorRampPalette(colors = c("#59a14f", "#b5ebaeff"))(4),
+
+  GGB = c("#fecf44", "#fac526", "#ebbb2c", "#f3c029", "#e1b32b", "#cda839"), #c("#59a14f", "#77a371ff", "#71a38cff", "#9cd694ff", "#b5ebaeff"),
+  Atopobium = c("#5ee0cb"),
+  Veillonellaceae = c("#d84eac"),
+  Porphyromonas = c("#3382bd"),
+  Tissierellia = c("#fefdb3"),
+  Winkia = c("#bdbd26"),
+  Veillonella = c("#10bece"),
+  Anaerococcus = c("#e45618", "#e8a081"),
+  Peptoniphilus = c("#d4626a", "#ddafb2"),
+  Finegoldia = c("#8ca150"),
+  Gemella = c("#fe003e"),
+  other = c("gray")
+
+  # other = c(
+  #   "#E3E6AD",
+  #   "#F8D0A4",
+  #   "#c4ce96",
+  #   "#9aacce",
+  #   "#e1caff",
+  #   "#abc5bf",
+  #   "#ffffd4",
+  #   "#c0a2c1",
+  #   "#c8ffd5",
+  #   "#c8ffd5",
+  #   "#afb7ee",
+  #   "#ffc8d9",
+  #   "#ffc8d9",
+  #   "#e7b993",
+  #   "#c8ffd5",
+  #   "#c4cea9",
+  #   "#a1b37d",
+  #   "#a6cca7",
+  #   "#d1b9ee",
+  #   "#88c29c",
+  #   "#fdcc8a",
+  #   "#91c6f7",
+  #   "#f5f8bd",
+  #   "#8db1c5",
+  #   "#fab0aa",
+  #   "#7cb6b6",
+  #   "#96f3eb",
+  #   "#6ececc"
+  # )
+)
+
+taxa_col.fun <- function(df) {
+  lvls <- names(pal_list)
+  gr_lvls <- lvls %>% paste0(., collapse = "|")
+  d <- df %>%
+    mutate(
+      gr_lvl = ifelse(
+        str_detect(feature, gr_lvls),
+        str_extract(feature, gr_lvls),
+        "other"
+      )
+    ) %>%
+    group_by(gr_lvl) %>%
+    arrange(desc(abundance)) %>%
+    select(gr_lvl, feature) %>%
+    ungroup() %>%
+    unique() %>%
+    mutate(gr_lvl = factor(.$gr_lvl, levels = lvls)) %>%
+    arrange(gr_lvl) %>%
+    nest(.by = "gr_lvl") %>%
+    mutate(
+      data = map2(
+        gr_lvl,
+        data,
+        ~ if (.x == "other") arrange(.y, as.character(feature)) else .y
+      )
+    ) %>%
+    unnest(cols = c(data))
+
+  col <- d %>%
+    group_by(gr_lvl) %>%
+    #mutate(col = list(pal_list[[cur_group_id()]])) %>%
+    mutate(col = pal_list[[first(gr_lvl)]][seq_len(n())]) %>%
+    ungroup() %>%
+    select(-gr_lvl) %>%
+    deframe()
+
+  return(col)
+}
 ```
 
 ## 4. Plot MG barplot (strain level)
@@ -859,28 +1006,65 @@ df_long <- MG_data %>%
   ) %>%
   # remove long strain id, replace with int:
   mutate(
-    clade_name = make.unique(sub("\\s+\\S+$", "", clade_name), sep = " "),
+    strain = make.unique(sub("\\s+\\S+$", "", clade_name), sep = " "),
     .by = "sample"
   ) %>%
-  mutate(strain = clade_name, .after = "clade_name") %>%
   # replace "_" with " ":
-  mutate(clade_name = str_replace_all(clade_name, "\\||_", " ")) %>%
-  mutate(clade_name = str_replace(clade_name, " \\d", ""))
+  mutate(strain = str_replace_all(strain, "_", " ")) %>%
+  mutate(species = str_replace(strain, " \\d$", "")) %>%
+  mutate(genus = str_replace(clade_name, "_.+$", ""))
 
+#####################
+# GET COLOUR PALLET #
+#####################
 # top taxa
+# use this information to build a pallet for the 20 top abundant genus:
 top_taxa <- df_long %>%
-  summarise(sum = sum(abundance), .by = "clade_name") %>%
-  arrange(desc(sum))
+  summarise(sum = sum(abundance), .by = c("genus", "species", "strain")) %>%
+  arrange(desc(sum)) %>%
+  # get right order of legend
+  mutate(species = factor(.$species, levels = unique(.$species))) %>%
+  mutate(genus = factor(.$genus, levels = unique(.$genus))) %>%
+  arrange(genus, species, strain) %>%
+  {
+    . ->> top
+  } %>%
+  nest(., .by = "genus") # %>%
+  # print(n = 32)
 
-# IDENTIFY MOST HIGLY ABUNDANT TAXA #
-n <- top_taxa$clade_name[1:15] %>% unique()
+top_taxa[1:20, ]
 
+# top 20 genus colour pallet
+MG_colours <- df_long %>%
+  # Non-abundant taxa to "other":
+  mutate(
+    feature = ifelse(
+      grepl(paste0(top_taxa$genus, collapse = "|"), .$strain),
+      .$strain,
+      "other"
+    )
+  ) %>%
+  # gets colour for each taxa
+  taxa_col.fun(.)
+
+# save pallet for later use
+top %>%
+  mutate(
+    col = ifelse(strain %in% names(MG_colours), MG_colours[.$strain], "gray")
+  ) %>%
+  write_csv(., "../Results/Metagenomics/Metagenome_col_pal.csv")
+
+# Select top 20 species
+# you can choose if you want to include species by sum abundance or by alfabetical
+# dpending on if you use the levels() or just the order of n
+n <- levels(top$species)[1:20]
+n_lvl <- top$species %>% unique() %>% as.vector()
 #########################
 # PRETTY PLOT ADDITIONS #
 #########################
 df_long_ <- df_long %>%
-  # filter(sample == "S91_BL") %>%
-
+  # select species level
+  mutate(clade_name = species) %>%
   # assigne each sample into a taxa group (one of Lactobacillus, iners, Gardnerella or other )
   # gr.fun(.) # test
   mutate(gr = gr.fun(.)[as.character(.$sample)]) %>%
@@ -892,12 +1076,13 @@ df_long_ <- df_long %>%
 
   # Non-abundant taxa to "other":
   mutate(
-    clade_name = ifelse(.$clade_name %in% n[1:15], .$clade_name, "other")
+    species = ifelse(.$species %in% n, .$species, "other")
   ) %>%
-  mutate(clade_name = factor(clade_name, levels = c(n[1:15], "other"))) %>%
+  mutate(species = factor(species, levels = c(n_lvl, "other"))) %>%
 
   # gets colour for each taxa
-  mutate(col = group.colors[as.character(.$clade_name)]) %>%
+  #mutate(col = ifelse(strain %in% names(MG_colours), MG_colours[.$strain], "gray")
+  mutate(col = MG_colours[as.character(.$species)]) %>%
   filter(abundance != 0)
 
 sample_order_uniq <- levels(df_long_$sample)
@@ -908,18 +1093,18 @@ sample_order_uniq <- levels(df_long_$sample)
 # PLOT STRAIN LEVEL ABUNDANCE OF REMAINING SAMPLES #
 ####################################################
 col_pal <- df_long_ %>% select(clade_name, col) %>% unique() %>% deframe()
-colourCount = length(unique(df_long_$clade_name))
-getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+colourCount <- length(unique(df_long_$clade_name))
+getPalette <- colorRampPalette(brewer.pal(9, "Set1"))
 
 #plot the ctrls
 # quartz(width = 15, height = 6, dpi = 150)
 barplot <- ggplot(
   df_long_,
-  aes(x = sample, y = abundance, fill = clade_name) # round(value, digits = 3)
+  aes(x = sample, y = abundance, fill = species) # round(value, digits = 3)
 ) +
   geom_col(width = .9, position = "stack") +
   # geom_text(aes(label = value), position = position_stack(vjust = 0.5)) +
-  scale_fill_manual(values = col_pal) + # pal[1:colourCount]
+  scale_fill_manual(values = MG_colours) + # pal[1:colourCount]
   guides(
     fill = guide_legend(
       override.aes = list(size = 2),
@@ -959,8 +1144,8 @@ library(ggnewscale)
 # PLOT STRAIN LEVEL ABUNDANCE BY GROUPS #
 ####################################################
 col_pal <- df_long_ %>% select(clade_name, col) %>% unique() %>% deframe()
-colourCount = length(unique(df_long_$clade_name))
-getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+colourCount <- length(unique(df_long_$clade_name))
+getPalette <- colorRampPalette(brewer.pal(9, "Set1"))
 lgd <- get_legend(barplot)
 
 annot_bar <- df_long_ %>%
@@ -1048,7 +1233,7 @@ MG_df <- df_long_ %>%
 #   )
 
 # quartz(width = 10.5, height = 6 )
-MG_bar <- Facet_bar.fun(MG_df, "RVVC_pos", fill = "clade_name", col_pal)
+MG_bar <- Facet_bar.fun(MG_df, "RVVC_pos", fill = "clade_name", MG_colours)
 plot(MG_bar)
 
 
@@ -1154,7 +1339,7 @@ top_path <- df_long %>%
   arrange(desc(sum))
 
 # IDENTIFY MOST HIGLY ABUNDANT TAXA #
-n <- top_path$Pathway[1:17] %>% unique()
+n <- top_path$Pathway[1:22] %>% unique()
 
 ####################
 # DFINE TAXA LEVEL #
@@ -1166,7 +1351,7 @@ subgroup <- "Pathway"
 #################################################
 # IDENTIFY MOST HIGLY ABUNDANT META GROUP LEVEL #
 #################################################
-# get taxa order from percent taxa
+# get pathway order from max/median/mean abundance
 # you can test what order you prefer by changing between max, median, and mean
 ord <- df_long %>%
   select(sample, abundance, !!(meta_group)) %>%
@@ -1183,7 +1368,7 @@ ord <- df_long %>%
 # ARRANGE ID ORDER #
 ####################
 #dput(sort(unique(df[[meta_group]])))
-meta_group_lvl <- ord[[1]][1:12]
+meta_group_lvl <- ord[[1]][1:21]
 
 df <- df_long %>%
   #filter(Superclass2 == "Other Biosynthesis") %>%
@@ -1254,6 +1439,11 @@ name <- df %>% #arrange( as.character(meta_group)) %>%
 FM_colours <- ColourPalleteMulti(df, meta_group, subgroup) %>%
   set_names(., name)
 # scales::show_col(colours)
+d <- tibble(Pathway = name, col = FM_colours)
+write_csv(
+  tibble(Pathway = name, col = FM_colours),
+  "../Results/Metagenomics/Functional_col_pal.csv"
+)
 
 ##########
 # LEGEND #
@@ -1457,6 +1647,7 @@ chem_hierarchy <- chem_long %>%
     names_from = level,
     values_from = class
   )
+write_csv(chem_hierarchy, "../Results/Metagenomics/MB_chem_hierarchy.csv")
 
 chem_hierarchy
 ```
@@ -1526,7 +1717,7 @@ n <- top_path$names[1:17] %>% unique()
 ####################
 # DFINE TAXA LEVEL #
 ####################
-meta_group <- "MB_Class1"
+meta_group <- "MB_Class2"
 subgroup <- "names"
 
 
@@ -1623,6 +1814,11 @@ MB_colours <- ColourPalleteMulti(df, meta_group, subgroup) %>%
   set_names(., name)
 # scales::show_col(colours)
 
+write_csv(
+  tibble(Pathway = name, col = MB_colours),
+  "../Results/Metagenomics/Metabolome_col_pal.csv"
+)
+
 ##########
 # LEGEND #
 ##########
@@ -1711,27 +1907,6 @@ MB_df <- df %>%
 #############################
 # FUNCTIONAL META BAR PLOT #
 ############################
-# MB_bar <- ggplot(df, aes(fill = annot, y = abundance, x = sample)) +
-#   geom_bar(position = "stack", stat = "identity") +
-#   theme_minimal() +
-#   coord_cartesian(expand = F) +
-#   scale_fill_manual(values = colours) +
-#   theme(
-#     plot.margin = unit(c(1, 0.5, 1, 0), "cm"),
-#     axis.text.x = element_text(
-#       angle = 90,
-#       vjust = 0.5,
-#       hjust = 1,
-#       size = 8,
-#       margin = margin(t = -5, b = 3)
-#     ),
-#     axis.title.y = element_blank(),
-#     legend.position = "none"
-#   ) +
-#   facet_grid(cols = vars(RVVC_pos), scales = "free_x", space = "free_x")
-#facet_wrap(~group ) +
-#facet_grid(cols = vars(groups), scales = "free_x", space = "free_x", switch = "x")
-
 MB_bar <- Facet_bar.fun(MB_df, "RVVC_pos", colours = MB_colours)
 
 l <- plot_grid(
