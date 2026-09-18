@@ -4,6 +4,7 @@ date: today
 date-format: "D MMM YYYY"
 format:
   html: 
+    theme: minty
     embed-resources: true
     toc: true
     toc-depth: 2
@@ -18,28 +19,24 @@ format:
 #### Quality Control and Normalization
 
 1. **Step 1: Load data and meta data**  
-   Load data and meta data and filter out any QC samples.
-
+   Load data and meta data and filter out any QC samples.  
 2. **Step 2: Filter low count samples**  
-
+   Inspect quality control samples by plotting
 3. **Step 3: Taxonomical-filtering**  
    Identify treshold for low abundant taxa to filter<br>
-   Step 1. Split clade name into seperate columns<br>
-   Step 2. Identify the strains to remove<br>
-   Step 3. Aggregate removed strains by higher levels<br>
-   Step 4. Get longer format and add back clade_names<br>
-   Step 5. Subtract filtered taxa from each higher taxa levels<br>
-   Step 6. Check for samples with total taxa < 60% after filtering<br>
-   Step 7: Check and replace negative values with zero<br>
-   Step 8: Re-normalize each sample to 100%<br>
-
+    1. Split clade name into seperate columns<br>
+    2. Identify the strains to remove<br>
+    3. Aggregate removed strains by higher levels<br>
+    4. Get longer format and add back clade_names<br>
+    5. Subtract filtered taxa from each higher taxa levels<br>
+    6. Check for samples with total taxa < 60% after filtering<br>
+    7. Check and replace negative values with zero<br>
+    8. Re-normalize each sample to 100%<br>
 4. **Step 4: Simplify clade names**  
-
-5. **Step 5: Centered Log Ratio (CLR) Transformation**
-
-6. **Step 6: Exploratory Unsupervised PCA**
-
-7. **Step 7: Exploratory Heatmap**
+5. **Step 5: Plot barplots**  
+5. **Step 6: Centered Log Ratio (CLR) Transformation**  
+6. **Step 7: Exploratory Unsupervised PCA**  
+7. **Step 8: Exploratory Heatmap**
 
 ### Load Libraries
 ```{r Libraries}
@@ -54,13 +51,120 @@ library(readxl)
 library(cowplot)
 library(RColorBrewer)
 library(scales)
+library(kableExtra)
 select <- dplyr::select
 map <- purrr::map
 
 #################
 # COLOUR PALLET #
 #################
-pal <- c("#902267", "#ffa998", "#f588af", "gray") # "gray", #e05e85
+# colour pallets
+pal <- list(
+  CST = c(
+    "I" = "#148F77",
+    "II" = "#6d9f06",
+    "III" = "#A3E4D7",
+    "IV-B" = "#E794C1",
+    "IV-C" = "#b5cb8c",
+    "V" = "#43BA8F"
+  ),
+  subCST = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#91c5de"
+  ),
+  "Fungal culture: C. albicans (y/n)" = c("#EAEAEA", "#fd814e"),
+  RVVC = c("#EAEAEA", "#fd814e"),
+  BV = c("#EAEAEA", "#fd814e"),
+  NAC = c("#EAEAEA", "#fd814e"),
+  ST = c("#EAEAEA", "#fd814e"),
+  missing_page = c("#EAEAEA", "#fd814e"),
+  Clin = c("#a5c97b", "#cc93cf", "#de9548", "#63d3b4", "#9e8dec", "#902267"),
+  Clin_gr = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_AS = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_pos = set_names(
+    c(
+      "#A6CEE3",
+      "#1F78B4",
+      "#e490c4ff",
+      "#c12d88ff"
+    ),
+    c("Control_neg", "Control_pos", "RVVC_neg", "RVVC_pos")
+  ),
+  # "#FB9A99", "#E31A1C", "#B2DF8A", "#609c5bff", "#FDBF6F", "#FF7F00",, "#CAB2D6", "#6a3d9a" "#e490c4ff", "#c12d88ff"
+  trx_louvain_7 = c(
+    "#de9548",
+    "#cc93cf",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4",
+    '#FB5273'
+  ),
+  trx_louvain_6 = c(
+    "#cc93cf",
+    "#de9548",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4",
+    '#FB5273'
+  ),
+  metab_louvain = c(
+    "#cc93cf",
+    "#a5c97b",
+    "#de9548",
+    "#902267",
+    "#9e8dec",
+    "#63d3b4",
+    '#FB5273'
+  ),
+  microb_louvain = c(
+    "#cc93cf",
+    "#de9548",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4",
+    '#FB5273'
+  ),
+  fun_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273'
+    #"#984EA3"
+    #"#B3CDE3"
+  ),
+  integ_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#984EA3"
+    #"#B3CDE3"
+  ),
+  "Wet_smear:_clue_cells_(y/n)" = c("#2266ac", "#91c5de"),
+  hyphae = c("#f26386", "#fd814e", "#a4d984", "#fbbc52"),
+  pos = c("#91c5de", "#2266ac"),
+  fct6_clus = c("#F8766D", "#7CAE00", "#00BFC4", "#C77CFF"),
+  fct1_clus = c("#33A02C", "#B2DF8A", "#FF7F00", "#FDBF6F"), #"#FDBF6F" "#FF7F00", "#CAB2D6", "#6A3D9A"
+  "Clinical score (0-5)" = brewer.pal(6, name = "Reds"),
+  "Clinical_score_(0-5)" = brewer.pal(6, name = "Reds")
+)
+
+pal1 <- c("#902267", "#ffa998", "#f588af", "gray") # "gray", #e05e85
 pal2 <- c(
   "#f26386",
   "#f588af",
@@ -70,7 +174,12 @@ pal2 <- c(
   "#fd814e",
   "gray"
 )
-RVVC_pal = c("#A6CEE3", "#1F78B4", "#e490c4ff", "#c12d88ff")
+RVVC_pal <- c("#A6CEE3", "#1F78B4", "#e490c4ff", "#c12d88ff")
+
+gg_color_hue <- function(n) {
+  hues <- seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
 
 # setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
 
@@ -92,6 +201,7 @@ https://mixomics.org/mixmc/mixmc-preprocessing/
 ## Step 1: Load data
 
 ```{r Load-data}
+#| output: false
 data_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/Tidy_data/Metagenomics/Metageonome_all_vagswab_metaphlan.csv"
 count_info_vagswab_path <- "../Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv"
 meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
@@ -105,14 +215,16 @@ count_info_vagswab <- read_csv(count_info_vagswab_path)
 meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1, na = "na")
 meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 0, na = "na")
 
-comb_meta_path <- "../Results/Combined_gr_meta_data.csv"
+comb_meta_path <- "../Results/Combined_gr_meta_data_all.csv"
 meta_gr <- read_csv(comb_meta_path) %>%
-  #rename(sample = "svamp_ID") %>%
+  rename(sample = "svamp_ID") %>%
   mutate(across(2:25, ~ factor(.x)))
 ```
 
 
 ```{r group-assignment}
+#| code-fold: true
+#| eval: false
 g <- c(
   "0" = "0-1",
   "1" = "0-1",
@@ -200,6 +312,341 @@ S10 and S15 was exluded due to poor quality
 S86_1W stoped coming after two weeks
 S65_3M missed the 3m visit
 
+## Plot control samples
+
+```{r colour-function}
+#| code-fold: true
+#colors
+#colors
+group.colors <- c(
+  "Alicyclobacillus acidiphilus" = "#FB5273",
+  "Lactobacillus crispatus" = "#148F77",
+  "Lactobacillus iners" = "#A3E4D7",
+  "Lactobacillus gasseri" = "#6D9F06",
+  "Lactobacillus jensenii" = "#4E7705",
+  "Lactobacillus acidophilus" = "#b4cb8c",
+  "Gardnerella vaginalis" = "#CC79A7", #"#7D3560",
+  "Fannyhessea vaginae" = "#EFB6D6", #"#E794C1",
+  "Streptococcus agalactiae" = "#FFD5AF",
+  "Limosilactobacillus portuensis" = "#F09163",
+  "Candida albicans" = "#8B0000",
+  "Ureaplasma parvum" = "#ff7f00",
+  "other" = "#8B8B8B",
+
+  "Sneathia vaginalis" = "#7786e9",
+
+  "Coriobacteriales bacterium DNF00809" = "#afb7ee",
+  "GGB3012 SGB4003" = "#8892d5",
+
+  "Staphylococcus aureus" = "#566be9",
+  "Prevotella bivia" = "#fecf44",
+  "Prevotella amnii" = "#dcb12e",
+  "Dialister micraerophilus" = "#ffe2c9",
+  "Aerococcus christensenii" = "#A569BD",
+  "Megasphaera lornae" = "#C17754"
+)
+pal_list <- list(
+  Alicyclobacillus = c("#FB5273"),
+  Lactobacillus = c(
+    "#148F77",
+    "#A3E4D7",
+    "#6D9F06",
+    "#4E7705",
+    "#b4cb8c",
+    "#6e9b20",
+    "#6ba705",
+    "#50701a"
+  ),
+  Gardnerella = c(
+    "#8a3c4eff",
+    "#cc79a7",
+    "#d45265ff",
+    "#f07487ff",
+    "#f1a6b1",
+    "#f5b4be",
+    "#f9d1d7"
+  ),
+  Fannyhessea = c("#EFB6D6", "#E794C1"),
+  Prevotella = colorRampPalette(colors = c("#e06806ff", "#eebc89ff"))(24),
+  # Prevotella = c(
+  #   "#e06806ff",
+  #   "#e2771fff",
+  #   "#e99a59ff",
+  #   "#f0c497ff",
+  #   "#eebc89ff"
+  # ),
+  Candida = c("#8B0000", "#c61717", "#d84141", "#ef7575"),
+  Megasphaera = c("#C17754", "#c7927a"),
+  Sneathia = c("#5b97e4", "#77bbe9"),
+  Aerococcus = c("#b1436d"),
+  Limosilactobacillus = colorRampPalette(colors = c("#A569BD", "#d3b1e1"))(5),
+  Coriobacteriales = c("#afb7ee"),
+
+  Staphylococcus = c("#566be9", "#909ff5", "#b9c3f8"),
+  Alloscardovia = c("#d84eac", "#e69fdf"),
+
+  Streptococcus = colorRampPalette(colors = c("#f9f034", "#f5f2b0"))(14), #c("#fecf44", "#fac526", "#dcb12e") c("#FFD5AF"),
+  Dialister = c("#ffbb96", "#ffe2c9"),
+  Ureaplasma = c("#ff7f00", "#fead5b"),
+  Lacticaseibacillus = c("#8892d5", "#afb7ea"),
+  Bifidobacterium = colorRampPalette(colors = c("#59a14f", "#b5ebaeff"))(4),
+
+  #Veillonellaceae = c(),
+  #"GGB3012 SGB4003" = ,
+  GGB = c("#fecf44", "#fac526", "#ebbb2c", "#cda839"), #c("#59a14f", "#77a371ff", "#71a38cff", "#9cd694ff", "#b5ebaeff"),
+  #other = c("gray")
+  other = c(
+    "#E3E6AD",
+    "#F8D0A4",
+    "#c4ce96",
+    "#9aacce",
+    "#e1caff",
+    "#abc5bf",
+    "#ffffd4",
+    "#c0a2c1",
+    "#c8ffd5",
+    "#c8ffd5",
+    "#afb7ee",
+    "#ffc8d9",
+    "#ffc8d9",
+    "#e7b993",
+    "#c8ffd5",
+    "#c4cea9",
+    "#a1b37d",
+    "#a6cca7",
+    "#d1b9ee",
+    "#88c29c",
+    "#fdcc8a",
+    "#91c6f7",
+    "#f5f8bd",
+    "#8db1c5",
+    "#fab0aa",
+    "#7cb6b6",
+    "#96f3eb",
+    "#6ececc"
+  )
+)
+
+taxa_col.fun <- function(df) {
+  lvls <- names(pal_list)
+  gr_lvls <- lvls %>% paste0(., collapse = "|")
+  d <- df %>%
+    mutate(
+      gr_lvl = ifelse(
+        str_detect(feature, gr_lvls),
+        str_extract(feature, gr_lvls),
+        "other"
+      )
+    ) %>%
+    group_by(gr_lvl) %>%
+    arrange(desc(abundance)) %>%
+    select(gr_lvl, feature) %>%
+    ungroup() %>%
+    unique() %>%
+    mutate(gr_lvl = factor(.$gr_lvl, levels = lvls)) %>%
+    arrange(gr_lvl) %>%
+    nest(.by = "gr_lvl") %>%
+    mutate(
+      data = map2(
+        gr_lvl,
+        data,
+        ~ if (.x == "other") arrange(.y, as.character(feature)) else .y
+      )
+    ) %>%
+    unnest(cols = c(data))
+
+  col <- d %>%
+    group_by(gr_lvl) %>%
+    #mutate(col = list(pal_list[[cur_group_id()]])) %>%
+    mutate(col = pal_list[[first(gr_lvl)]][seq_len(n())]) %>%
+    ungroup() %>%
+    select(-gr_lvl) %>%
+    deframe()
+
+  return(col)
+}
+```
+
+```{r plot-control-samples}
+#| fig-width: 10
+#| fig-height: 8
+#| code-fold: true
+############################
+# GET CTRL SAMPLES #
+###########################
+t <- set_names(taxonomy, seq_along(taxonomy))
+data_ctrl <- data %>%
+  select(
+    clade_name,
+    contains("ex"),
+    contains("seq"),
+    contains("_run2"),
+    starts_with("KX")
+  ) %>% # removes ctrl and extra samples
+  select(-matches("_1W|_3M|_6M")) %>%
+  mutate(
+    level = factor(
+      t[as.character(str_count(clade_name, "\\|") + 1)],
+      levels = taxonomy
+    ),
+    .after = "clade_name"
+  ) # %>%
+# separate(
+#   col = clade_name,
+#   into = taxonomy,
+#   sep = "\\|",
+#   remove = FALSE,
+#   fill = "right"
+# )
+
+# Modify taxa labels
+data_ctrl <- data_ctrl %>%
+  mutate(
+    taxa = str_extract_all(
+      clade_name,
+      "(?<=k__|p__|c__|o__|f__|g__|s__|t__)[^|]+"
+    ),
+    taxa = map2_chr(
+      taxa,
+      level,
+      ~ {
+        if (.y %in% c("species", "strain")) {
+          # keep everything from genus onward
+          start <- which(
+            c("k", "p", "c", "o", "f", "g", "s", "t") %in% substr(.y, 1, 1)
+          )
+          paste(.x[start:length(.x)], collapse = " ")
+        } else {
+          # keep only the last element (current level)
+          tail(.x, 1)
+        }
+      }
+    ),
+    .after = "level"
+  ) %>%
+  select(-clade_name) %>%
+  rename(clade_name = taxa)
+
+# pivot longer and calculate perecentage for the 15 most abundant taxa
+df_ctrl_long <- data_ctrl %>%
+  # select taxonomy level
+  filter(grepl("strain", level)) %>%
+  # remove long strain id, replace with int:
+  # mutate(
+  #   clade_name = make.unique(sub("\\s+\\S+$", "", clade_name), sep = " ")
+  # ) %>%
+  # mutate(strain = clade_name, .after = "level") %>%
+  # replace "_" with " ":
+  mutate(clade_name = str_replace_all(clade_name, "\\||_", " ")) %>%
+  mutate(clade_name = str_replace(clade_name, " \\d", "")) %>%
+  # removes taxa that sums to zero:
+  filter(sum(c_across(where(is.double))) != 0) %>%
+  # arrange acording to taxa rowsum
+  arrange(desc(rowSums(across(where(is.numeric))))) %>%
+  {
+    . ->> top_taxa
+  } %>%
+  # mutate(clade_name = factor(.$clade_name, levels = .$clade_name)) %>%
+  # slice_head(., n = 15) %>%
+  pivot_longer(
+    cols = where(is.double),
+    names_to = "sample",
+    values_to = "abundance"
+  ) %>%
+  # get genus-strain lvl columns:
+  mutate(genus = str_extract(clade_name, "^\\w+"), .before = "sample") %>%
+  mutate(
+    species = str_replace(clade_name, " \\w+$", ""),
+    .before = "sample"
+  ) %>%
+  mutate(
+    strain = make.unique(sub("\\s+\\S+$", "", clade_name), sep = " "),
+    .by = "sample",
+    .before = "sample"
+  )
+
+
+#####################
+# GET COLOUR PALLET #
+#####################
+# top taxa
+# use this information to build a pallet for the 20 top abundant genus:
+top_taxa <- df_ctrl_long %>%
+  summarise(sum = sum(abundance), .by = c("genus", "species", "strain")) %>%
+  arrange(desc(sum)) %>%
+  # get right order of legend
+  mutate(species = factor(.$species, levels = unique(.$species))) %>%
+  mutate(genus = factor(.$genus, levels = unique(.$genus))) %>%
+  arrange(genus, species, strain) %>%
+  {
+    . ->> top
+  } %>%
+  nest(., .by = "genus") %>%
+  .[1:20, ]
+
+# top 20 genus colour pallet
+MG_colours <- df_ctrl_long %>%
+  # Non-abundant taxa to "other":
+  mutate(feature = strain) %>%
+  mutate(
+    feature = ifelse(
+      grepl(paste0(top_taxa$genus, collapse = "|"), .$strain),
+      .$strain,
+      "other"
+    )
+  ) %>%
+  # gets colour for each taxa
+  taxa_col.fun(.)
+
+# save pallet for later use
+top %>%
+  mutate(
+    col = ifelse(strain %in% names(MG_colours), MG_colours[.$strain], "gray")
+  ) #%>%
+#write_csv(., "../Results/Metagenomics/Metagenome_col_pal.csv")
+
+# Select top 20 species
+# you can choose if you want to include species by sum abundance or by alfabetical
+# dpending on if you use the levels() or just the order of n
+n <- levels(top$species)
+n_lvl <- top$species %>% unique() %>% as.vector()
+
+#plot the ctrls
+# quartz(width = 10, height = 8, dpi = 120)
+barplot <- df_ctrl_long %>%
+  #mutate(species = factor(species, levels = n)) %>%
+  ggplot(
+    .,
+    aes(x = sample, y = abundance, fill = species) # round(value, digits = 3)
+  ) +
+  geom_col(width = .9, position = "stack") +
+  # geom_text(aes(label = value), position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = MG_colours) + # pal[1:colourCount]
+  guides(
+    fill = guide_legend(
+      override.aes = list(size = 2),
+      ncol = 5,
+      byrow = FALSE,
+      keyheight = .4,
+      keywidth = .6
+    )
+  ) +
+  theme_classic() +
+  coord_cartesian(expand = F) +
+  theme(
+    plot.margin = unit(c(1, 0.5, 1, 0), "cm"),
+    legend.spacing.y = unit(.5, 'cm'),
+    legend.title = element_blank(),
+    legend.text = element_text(margin = margin(r = .3, l = .3, unit = "pt"), ),
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.position = "bottom"
+  )
+barplot
+```
+
+All the negative control samples were spiked with Alicyclobacillus acidiphilus, which is a known contaminant, and should therefore be removed from any other samples.
+
 ## Step 3: Taxonomical-filtering
 keep taxa with at least 0.005% in at least 6% (6 out of 93) of samples, or at least 2% relative abundance in at least 1 sample.
 
@@ -228,7 +675,15 @@ data <- data %>%
 n_samples <- select(data, starts_with("S")) %>% ncol() # number of good samples
 n_samples
 
-# keep taxa with at least 0.005% in at least 6% (5 out of 84) of samples, or at least 2% relative abundance in at least 1 sample.
+# before taxa filtering we select the MOFA selected samples
+m <- read_csv("../Results/Sample_omic_table.csv")
+data <- data %>%
+  select(clade_name, level, any_of(m$sample[m$at_least_two & m$all_BL]))
+
+n_samples <- select(data, starts_with("S")) %>% ncol() # number of good samples
+n_samples
+
+# keep taxa with at least 0.005% in at least 6% (5 out of 87) of samples, or at least 2% relative abundance in at least 1 sample.
 
 # --- Step 1. split clade name into seperate columns
 temp <- data %>%
@@ -236,30 +691,54 @@ temp <- data %>%
     col = clade_name,
     into = taxonomy,
     sep = "\\|",
-    #remove = FALSE,
+    remove = FALSE,
     fill = "right"
-  ) %>%
-  # keeps any row where at least one numeric column has a value greater than zero
-  filter(if_any(where(is.double), ~ .x > 0))
+  )
 
 # --- Step 2. Identify the strains to remove
 strains_to_remove <- temp %>%
   filter(level == "strain") %>%
   filter(
-    !(rowSums(across(where(is.double), ~ .x > 0.005)) >=
-      round(0.06 * n_samples) |
-      rowSums(across(where(is.double), ~ .x >= 2)) >= 1)
+    species == "s__Alicyclobacillus_acidiphilus" | # remove species thought to be contaminant
+      !(rowSums(across(where(is.double), ~ .x > 0.005)) >=
+        round(0.06 * n_samples) |
+        rowSums(across(where(is.double), ~ .x >= 2)) >= 1)
   )
 
 # pander table of strains to remove
 strains_to_remove %>%
-  arrange(desc(rowSums(across(where(is.numeric))))) %>%
+  mutate(sum = rowSums(across(where(is.numeric))), .after = "level") %>%
+  arrange(sum) %>%
+  # keeps any row where at least one numeric column has a value greater than zero
+  filter(if_any(where(is.double), ~ .x > 0)) %>%
+  arrange(desc(sum)) %>%
   # removes samples with colsum = zero:
   select(
     -where(~ is.numeric(.x) && sum(.x) == 0)
   ) %>%
-  knitr::kable(., digits = 1)
-
+  select(species, strain, sum, matches("^S\\d\\d$")) %>%
+  {
+    . ->> tab
+  } %>% # Colour only the sample columns
+  mutate(
+    .,
+    across(
+      3:ncol(.),
+      ~ ifelse(
+        .x > 0,
+        paste0('<span style="color:red">', .x, '</span>'),
+        .x
+      )
+    )
+  ) %>%
+  knitr::kable(
+    digits = 1,
+    caption = "Values larger than zero is coloured in red. 86 rows with rowsum = 0 was removed, as well as the 100 more strain level taxa seen bellow:",
+    escape = FALSE
+  )
+# samples that had no taxa removed are not included in this table
+# thats why there are 60 columns
+dim(tab)
 
 # --- Step 3. Aggregate removed strains by higher levels
 removed_all_lvls <- strains_to_remove %>%
@@ -270,6 +749,7 @@ removed_all_lvls <- strains_to_remove %>%
     names_to = "level",
     values_to = "name"
   ) %>%
+  relocate(level, name, .before = "S01") %>%
   nest(.by = c(level)) %>%
   mutate(
     data = purrr::map(
@@ -308,27 +788,46 @@ get_full_clade.fun <- function(df) {
 
 removals <- removed_all_lvls %>%
   unnest(cols = data) %>%
-  mutate(clade_name = get_full_clade.fun(.))
+  mutate(clade_name = get_full_clade.fun(.), .before = "level")
+
+# removals %>% filter(level == "strain")
 
 #############################
 # FILTER AT ALL TAXA LEVELS #
 ############################
 # --- Step 5. Subtract from higher levels
 data_filt <- data %>%
+  filter(
+    !(level == "strain" & clade_name %in% strains_to_remove$clade_name)
+  ) %>%
   # Join percentages to be subtracted
   left_join(
-    select(removals, -name, -level),
-    by = "clade_name",
+    select(removals, -name),
+    by = c("level", "clade_name"),
     suffix = c("", "_rm")
   ) %>%
+  relocate("S02_rm", .before = "S02") %>%
   # Subtract sample-wise values
+  # coalesce handels the NA values introduced by left_join
   mutate(
     across(
       matches("^S\\d\\d$"),
-      ~ .x - coalesce(get(paste0(cur_column(), "_rm")), 0)
+      ~ if_else(
+        level == "strain",
+        .x,
+        .x - coalesce(get(paste0(cur_column(), "_rm")), 0)
+      )
     )
   ) %>%
+  # removes now empty rows:
+  filter(rowSums(across(matches("^S\\d\\d$")), na.rm = TRUE) != 0) %>%
+  #filter(abs(rowSums(across(matches("^S\\d\\d$")), na.rm = TRUE)) > 1e-12) %>%
   select(-ends_with("_rm"))
+
+data %>%
+  nest(.by = c(level))
+data_filt %>%
+  nest(.by = c(level))
 
 # --- Step 6. report any samples with less than 60% total taxa after filtering
 data_filt %>%
@@ -343,6 +842,7 @@ data_filt %>%
   arrange(value)
 
 colsums
+# check if any smaples has < 60% after taxa filtering
 colsums[colsums <= 60]
 
 # --- Step 7: check and replace negatives ---
@@ -677,7 +1177,8 @@ df_long <- data_filt_norm %>%
   )
 
 # IDENTIFY MOST HIGLY ABUNDANT TAXA #
-n <- top_taxa$clade_name[1:15] %>% unique()
+n <- top_taxa$clade_name %>% unique()
+n[1:16]
 
 #########################
 # PRETTY PLOT ADDITIONS #
@@ -710,8 +1211,8 @@ df_long_ <- df_long %>%
 # PLOT STRAIN LEVEL ABUNDANCE OF REMAINING SAMPLES #
 ####################################################
 col_pal <- df_long_ %>% select(clade_name, col) %>% unique() %>% deframe()
-colourCount = length(unique(df_long_$clade_name))
-getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+colourCount <- length(unique(df_long_$clade_name))
+getPalette <- colorRampPalette(brewer.pal(9, "Set1"))
 
 #plot the ctrls
 # quartz(width = 15, height = 6, dpi = 150)
@@ -755,8 +1256,8 @@ library(ggnewscale)
 # PLOT GENUS LEVEL ABUNDANCE BY GROUPS #
 ####################################################
 col_pal <- df_long_ %>% select(clade_name, col) %>% unique() %>% deframe()
-colourCount = length(unique(df_long_$clade_name))
-getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+colourCount <- length(unique(df_long_$clade_name))
+getPalette <- colorRampPalette(brewer.pal(9, "Set1"))
 lgd <- get_legend(barplot)
 
 annot_bar <- df_long_ %>%
@@ -843,7 +1344,7 @@ plot(barplot)
 # plot(lgd)
 ```
 
-## Step 5: Centered Log Ratio (CLR) Transformation
+## Step 6: Centered Log Ratio (CLR) Transformation
 For technical, biological and computational reasons, microbiome data is compositional such that they represent proportions or relative information. Proportional data are restricted to a space where the sum of all OTU proportions for a given sample sums to 1. Using standard statistical methods on such data may lead to spurious results. Likewise, any data that are compositional in nature are interpreted into relative counts. Hence, using a CLR transformation allows the circumvention of these spurious results.
 
 There are two ways of log-ratio transforming the data in mixOmics:
@@ -870,11 +1371,10 @@ https://mixomics.org/mixmc/mixmc-preprocessing/
 - Relative abundance (%) of taxa  
 - RPKM / TPM / CPM for genes or functions 
 
-```{r create-matrix}
-# Create matrix for all levels of taxa
-# NB! the majority(?) of mixOmics functions expect a format of
-# samples as rows and features as columns, thus the transformation
-# is VERY important!
+**NB!** the majority of mixOmics functions expect a format of samples as rows and features as columns, thus it is 
+VERY important to first transpose the data when applying CLR!
+```{r normalize}
+# Create matrix for all levels of taxa and transpose to samples (rows) x taxa (columns)
 matrix <- data_filt_norm %>%
   #rename_with(~ str_replace(.x, "_BL$", ""), everything()) %>%
   nest(data = -level) %>%
@@ -890,22 +1390,24 @@ matrix <- data_filt_norm %>%
   )
 
 matrix
-```
 
-```{r normalize}
 # Specify levels you want to process
 tax_levels <- c("order", "family", "genus", "species", "strain")
-
 
 matrix <- matrix %>%
   # Apply CLR transformation and PCA to each level
   mutate(
+    # go from percent to proportion (sum to 1)
+    data = map(data, ~ .x / 100),
     clr_data = map(
       data,
       ~ logratio.transfo(.x, logratio = "CLR", offset = 1e-6)
     )
   ) %>%
   mutate(across(2:3, ~ set_names(.x, paste0(.data[["level"]]))))
+
+# check samples sum to 1 instead of 100
+rowSums(matrix$data[[4]][1:3, ])
 ```
 
 ```{r save-CLR-transformed-data}
@@ -918,11 +1420,12 @@ matrix %>%
 # matrix <- read_csv("../Results/MixOmic/Metageonome_vagswab_CLR_transformed.csv")
 ```
 
-## Step 6: Exploratory Unsupervised PCA
+## Step 7: Exploratory Unsupervised PCA
 
 ```{r get-new-groups}
 gr <- tibble(ID = colnames(data)[-c(1, 2)]) %>%
-  left_join(., gr_data, by = c("ID" = "svamp_ID"))
+  #left_join(., gr_data, by = c("ID" = "svamp_ID"))
+  left_join(., meta_gr, by = c("ID" = "sample"))
 
 # gr <- tibble(sample = colnames(data)[-c(1, 2)]) %>%
 #   left_join(., meta_gr, by = "sample")
@@ -937,14 +1440,14 @@ matrix <- matrix %>%
 
   # Apply CLR transformation and PCA to each level
   mutate(
-    #clr_data = map(data, ~ logratio.transfo(.x, logratio = "CLR", offset = 1)),
+    #clr_data = map(data, ~ logratio.transfo(.x, logratio = "CLR", offset = 1e-6)),
     pca_res = map(clr_data, ~ pca(.x)),
     plot = map2(
       pca_res,
       level,
       ~ plotIndiv(
         .x,
-        col = pal,
+        col = pal$Clin_gr[1:length(unique(gr$Clin_gr))],
         group = gr$Clin_gr,
         ind.names = F,
         size.title = 9,
@@ -956,8 +1459,8 @@ matrix <- matrix %>%
       level,
       ~ plotIndiv(
         .x,
-        col = pal2,
-        group = gr$`Clinical score (0-5)`,
+        col = pal$RVVC_pos[1:length(unique(gr$RVVC_pos))],
+        group = gr$RVVC_pos,
         ind.names = F,
         size.title = 9,
         title = paste0(.y)
@@ -970,7 +1473,7 @@ matrix <- matrix %>%
 l <- get_legend(
   plotIndiv(
     matrix$pca_res[["genus"]],
-    col = pal,
+    col = pal$Clin_gr[1:length(unique(gr$Clin_gr))],
     legend = T,
     group = gr$Clin_gr
   )$graph
@@ -978,9 +1481,9 @@ l <- get_legend(
 l2 <- get_legend(
   plotIndiv(
     matrix$pca_res[["genus"]],
-    col = pal2,
+    col = pal$RVVC_pos[1:length(unique(gr$RVVC_pos))],
     legend = T,
-    group = gr$`Clinical score (0-5)`
+    group = gr$RVVC_pos
   )$graph
 )
 p <- matrix$plot %>% map("graph")
@@ -1019,7 +1522,7 @@ For this portion of the script we are following the MixOmics tutorial here:
 https://mixomics.org/mixmc/koren-bodysites-case-study/
 
 
-## Step 7: Exploratory Heatmap
+## Step 8: Exploratory Heatmap
 
 ```{r heatmap-matrix}
 library(ComplexHeatmap)
@@ -1054,34 +1557,62 @@ purple <- brewer.pal(6, name = "Purples")
 reds <- brewer.pal(6, name = "Reds")
 
 Red <- brewer.pal(6, name = "Reds") %>% c(., "gray")
-pal <- c("#f26386", "#a4d984", "#fbbc52", "gray") # "#f588af", "#fd814e"
-pal2 <- c("#2266ac", "#91c5de", "gray", "gray")
-pal3 <- c("#9e8dec", "#902267", "#cc93cf", "#a5c97b", "#de9548", "gray") #"#abcb4b" "#63d3b4"
+pal1 <- c("#f26386", "#a4d984", "#fbbc52") %>% c(., "gray") # "#f588af", "#fd814e"
+pal2 <- c("#2266ac", "#91c5de") %>% c(., "gray")
+pal3 <- c("#9e8dec", "#902267", "#cc93cf", "#a5c97b", "#de9548") %>%
+  c(., "gray") #"#abcb4b" "#63d3b4"
 
 
 # group information
 cols <- c(
   "Clin_gr",
-  "group",
+  "RVVC_pos",
   "Clinical score (0-5)",
   "Fungal culture: C. albicans (y/n)"
 ) %>%
   set_names()
+# use if there are NAs:
 lvls <- map(cols, ~ c(sort(unique(gr[[.x]])), "na"))
 
-annot_col <- gr %>%
-  mutate(across(all_of(cols), ~ factor(.x, levels = lvls[[cur_column()]])))
+annot_df <- gr %>%
+  select(1, any_of(cols)) %>%
+  mutate(across(2:ncol(.), ~ factor(.x))) %>%
+  # when NAs are present:
+  #mutate(across(all_of(cols), ~ factor(.x, levels = lvls[[cur_column()]]))) %>%
+  column_to_rownames(var = "ID")
+
+# order samples acording to matrix
+annot_df <- annot_df[colnames(matrix.h), ]
+
+ann_colors <- map(colnames(annot_df), function(val) {
+  # Levels for this column
+  levs <- levels(annot_df[[val]])
+
+  # CASE 1: column exists in pal → use provided palette
+  if (val %in% names(pal)) {
+    colors <- pal[[val]]
+    return(set_names(colors[1:length(levs)], levs))
+  }
+  # CASE 2: column not in pal → generate paired palette
+  colors <- gg_color_hue(length(levs))
+  set_names(colors, levs)
+  # colors <- brewer.pal(length(levs), "Paired")
+  # if (length(levs) == length(colors)) {
+  #   set_names(colors, levs)
+  # } else {
+  #   set_names(colors[1:length(levs)], levs)
+  # }
+})
+# Name the list by column names
+ann_colors <- set_names(ann_colors, colnames(annot_df))
 
 # check samples number
 dim(matrix.h)
-dim(annot_col)
+dim(annot_df)
 
 # top annotation object:
 top_annot <- columnAnnotation(
-  Clin_gr = annot_col$Clin_gr,
-  Groups = annot_col$group,
-  Culture = annot_col$`Fungal culture: C. albicans (y/n)`,
-  Clin = annot_col$`Clinical score (0-5)`,
+  df = annot_df,
   #show_legend = FALSE,
   show_annotation_name = T,
   annotation_name_gp = gpar(fontsize = 8),
@@ -1094,15 +1625,7 @@ top_annot <- columnAnnotation(
   ),
   simple_anno_size = unit(.3, "cm"),
   #gap = unit(1, "cm"),
-  col = list(
-    Clin = set_names(Red, levels(annot_col$`Clinical score (0-5)`)),
-    Clin_gr = set_names(pal, levels(annot_col$Clin_gr)),
-    Culture = set_names(
-      pal2,
-      levels(annot_col$`Fungal culture: C. albicans (y/n)`)
-    ),
-    Groups = set_names(pal3, levels(annot_col$group))
-  )
+  col = ann_colors
 )
 ```
 
@@ -1147,7 +1670,7 @@ p2 <- p + ylim(0, 10)
 plot_grid(p, p2, ncol = 2)
 
 # set limits for colourpallet
-RdBu = c(
+RdBu <- c(
   "#364B9A",
   "#4A7BB7",
   "#6EA6CD",
@@ -1180,10 +1703,10 @@ based on these histograms we can set the scale max and min breaks at 5
 # PLOT HEATMAP #
 ################
 # Heatmap global options:
-ht_opt$COLUMN_ANNO_PADDING = unit(.05, "cm")
-ht_opt$HEATMAP_LEGEND_PADDING = unit(-0, "cm") #unit(c(0, 0, 0, -1), "cm") #b,l,t,r
-ht_opt$TITLE_PADDING = unit(.05, "cm")
-ht_opt$DIMNAME_PADDING = unit(.05, "cm")
+ht_opt$COLUMN_ANNO_PADDING <- unit(.05, "cm")
+ht_opt$HEATMAP_LEGEND_PADDING <- unit(-0, "cm") #unit(c(0, 0, 0, -1), "cm") #b,l,t,r
+ht_opt$TITLE_PADDING <- unit(.05, "cm")
+ht_opt$DIMNAME_PADDING <- unit(.05, "cm")
 
 # average expression:
 H <- Heatmap(
