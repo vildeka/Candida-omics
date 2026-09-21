@@ -1,0 +1,1248 @@
+
+### Load data and libraries
+```{r Load_data}
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(readxl)
+library(org.Hs.eg.db)
+library(biomaRt)
+
+select <- dplyr::select
+# setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
+
+#########
+# PATHS #
+#########
+input_dir <- "../data/"
+
+meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp.xlsx"
+mbol_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/UTF-8SMC_P0800_GCMS_Data.xlsx"
+
+```
+
+To determine the groups you need column from the clinical file
+
+"Fungal culture: C. albicans (y/n)", 
+"Symptom score (0-5)", 
+"Recurring fungal infections > 2/year (y/n)"
+
+RVVCpos:	Positive fungal cultures, symptom score ≥1, >2 episodes of VVC per year
+Control:	Negative fungal culture, ≤2 episodes of VVC per year
+AS:     	Positive fungal scores, symptom score = 0, ≤2 episodes of VVC per year
+RVVCneg:	Negative fungal culture, >2 episodes of VVC per year
+
+## get group assignment
+
+```{r group-assignment}
+meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp.xlsx"
+meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1)
+
+gr_data <- meta_data %>%
+  select(
+    DS_ID = "ID",
+    svamp_ID,
+    Treatment,
+    `Fungal culture: C. albicans (y/n)`,
+    `Symptom score (0-5)`,
+    `Recurring fungal infections > 2/year (y/n)`
+  ) %>%
+  mutate(
+    group = case_when(
+      `Fungal culture: C. albicans (y/n)` == "1" &
+        `Symptom score (0-5)` >= 1 &
+        `Recurring fungal infections > 2/year (y/n)` == "1" ~
+        "RVVCpos",
+
+      `Fungal culture: C. albicans (y/n)` == "0" &
+        `Recurring fungal infections > 2/year (y/n)` == "1" ~
+        "RVVCneg",
+
+      `Fungal culture: C. albicans (y/n)` == "1" &
+        `Symptom score (0-5)` == 0 ~
+        "AS",
+
+      `Fungal culture: C. albicans (y/n)` == "0" &
+        `Recurring fungal infections > 2/year (y/n)` == "0" ~
+        "Control",
+
+      `Fungal culture: C. albicans (y/n)` == "1" &
+        `Recurring fungal infections > 2/year (y/n)` == "0" ~
+        "Candidapos",
+
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID = "svamp_ID", everything())
+
+write_csv(gr_data, "../Tidy_data/Asigned_groups_info_all_samples.csv")
+# gr_data <- read_csv("../Tidy_data/Asigned_groups_info_all_samples.csv")
+```
+
+## Format transcriptomics data
+
+There is something off with the naming of sample 12 or S69 it has 12:01 listed as baseline and a 1 month follow up which I have not seen any where else
+It turns out 12:01 is a baseline sample that was mistakenly named :01 instead of 02 as it should have ben, and the 1 week follow up should be three month follow up
+Additionaly the smaple "S75_BL" is called "S75_Bl" in the metadata sheet so I had to also fix this here
+
+This is recitified bellow
+
+```{r fix-mapping-files} 
+##################
+# LOAD LIBRARIES #
+##################
+library(tidyverse)
+library(biomaRt)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+
+#############
+# LOAD DATA #
+#############
+# NB! I had to add a 0 to the front of some of the patient_ID with numbers less than 10 (02, 03, 07, 09)
+# to the svamp_ID_list.xlsx from Margaux
+smpl_IDs <- read_xlsx(paste0(input_dir, "svamp_ID_list.xlsx"))
+smpl_barcodes <- read_xlsx(
+  paste0(input_dir, "Registrering Provrör ID CHLORHEX.xlsx"),
+  skip = 1
+)
+meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp.xlsx"
+meta_trx <- read_xlsx(
+  meta_path,
+  sheet = "Transcriptomics long",
+  skip = 2,
+  na = "NA"
+) %>%
+  filter(!(grepl("\\*", .$BEA_ID)))
+
+mapping_23P074 <- readRDS(paste0(input_dir, "Transcriptomics/smpl_23P074.rds"))
+mapping_24P003 <- read_tsv(
+  paste0(input_dir, "Transcriptomics/F.Fagerstrom_24_07_sample_info.txt")
+)
+mapping_24P003_ <- read_tsv(paste0(input_dir, "Transcriptomics/mapping.txt"))
+
+# NB! Tassos writes:
+# BEA24P003_28 is FF06580592 from the ngi
+# BEA24P003_28 is FF06580610 in meta
+# based on the "Registrering Provrör ID CHLORHEX.xlxs" files it should be FF06580610
+
+# Also BEA23P074_23, BEA23P074_3, BEA23P074_30, BEA23P074_20, BEA23P074_21 were sequenced in both runs
+# for batch correction, meaning they have different NGI_ID but same BEA_ID
+
+# Not sequenced due to low RIN values (n=10)
+# BEA23P074_1, BEA23P074_2, BEA23P074_5, BEA23P074_6, BEA23P074_13, BEA23P074_36, BEA23P074_40,
+# BEA24P003_11, BEA24P003_12, BEA24P003_22
+
+batch <- c(
+  "BEA23P074_23",
+  "BEA23P074_3",
+  "BEA23P074_30",
+  "BEA23P074_20",
+  "BEA23P074_21"
+)
+
+mapping_24P003_ <- mapping_24P003_ %>%
+  mutate(
+    NGI_ID = gsub("_[^_]*$", "", File),
+    .keep = "unused",
+    .before = Number_of_input_reads
+  ) %>%
+  dplyr::select(-...11)
+
+mapping_24P003 <- mapping_24P003 %>%
+  separate(`User ID`, into = c("BEA_ID", "Sample_ID"), sep = "_(?=[^_]+$)") %>%
+  dplyr::select(NGI_ID = "NGI ID", BEA_ID, Sample_ID, Mreads, `>=Q30`) %>%
+  mutate(BEA_ID = str_replace(.$BEA_ID, "i|_i", "")) %>%
+  left_join(., mapping_24P003_) %>%
+  mutate(
+    Sample_ID = ifelse(.$BEA_ID == "BEA24P003_28", "FF06580610", .$Sample_ID)
+  ) %>%
+  left_join(
+    .,
+    select(
+      smpl_barcodes,
+      Sample_ID = "ORANGE (biopsi, mikrobiom, 800µl DNA/RNA shield)",
+      DS_ID
+    ),
+    by = "Sample_ID"
+  ) %>%
+  left_join(
+    .,
+    select(smpl_IDs, svamp_ID, DS_ID = "patient_ID"),
+    by = "DS_ID"
+  ) %>%
+  select(-Number_mapped_in_genes) %>%
+  mutate(
+    svamp_ID = ifelse(
+      .$BEA_ID %in% batch,
+      paste0(.$svamp_ID, "_run2"),
+      .$svamp_ID
+    )
+  ) %>%
+  left_join(
+    .,
+    select(meta_trx, Sample_ID = sample_ID, RIN),
+    by = "Sample_ID"
+  ) %>%
+  relocate(DS_ID, svamp_ID, RIN, .after = "Sample_ID")
+
+
+mapping_23P074 <- mapping_23P074 %>%
+  as_tibble() %>%
+  dplyr::select(
+    NGI_ID,
+    BEA_ID,
+    Sample_ID = "vial",
+    any_of(colnames(mapping_24P003[4:14])),
+    Reads_in_genes
+  ) %>%
+  left_join(
+    .,
+    select(
+      smpl_barcodes,
+      Sample_ID = "ORANGE (biopsi, mikrobiom, 800µl DNA/RNA shield)",
+      DS_ID
+    ),
+    by = "Sample_ID"
+  ) %>%
+  left_join(
+    .,
+    select(smpl_IDs, svamp_ID, DS_ID = "patient_ID"),
+    by = "DS_ID"
+  ) %>%
+  left_join(
+    .,
+    select(meta_trx, Sample_ID = sample_ID, RIN),
+    by = "Sample_ID"
+  ) %>%
+  relocate(DS_ID, svamp_ID, RIN, .after = "Sample_ID")
+
+write_csv(mapping_23P074, "Tidy_data/Transcriptomics/Mapping_23P074.csv")
+write_csv(mapping_24P003, "Tidy_data/Transcriptomics/Mapping_24P003.csv")
+
+# Merge mapping files for run 1 (23P074) and run 2 (24P003)
+mapping <- bind_rows(mapping_24P003, mapping_23P074) %>%
+  mutate(
+    svamp_ID = if_else(
+      is.na(svamp_ID),
+      paste0("NA_", cumsum(is.na(svamp_ID))),
+      svamp_ID
+    )
+  )
+mapping <- mapping %>%
+  mutate(svamp_ID = str_replace(svamp_ID, "S75_Bl", "S75_BL")) %>%
+  mutate(svamp_ID = str_replace(svamp_ID, "S69_1M", "S69_3M")) %>%
+  arrange(svamp_ID) #%>%
+#dplyr::summarise(n = dplyr::n(), .by = c("Sample_ID",  "DS_ID", "svamp_ID")) |>
+#dplyr::filter(n > 1L)
+
+setdiff(meta_trx$sample_ID, mapping$Sample_ID)
+
+write_csv(mapping, "../Tidy_data/Transcriptomics/Mapping_all_trx_samples.csv")
+```
+
+### overviw of transcriptomics data
+```{r}
+#############
+# LOAD DATA #
+#############
+meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp.xlsx"
+meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1)
+
+s <- smpl_IDs %>%
+  select(svamp_ID, DS_ID = patient_ID) %>%
+  mutate(ID_ = str_extract(DS_ID, "K\\d+|^\\d+")) %>%
+  mutate(ID = str_extract(svamp_ID, "S\\d\\d")) %>%
+  left_join(
+    .,
+    select(
+      mapping,
+      svamp_ID,
+      BEA_code_transcriptomics_tissue = NGI_ID,
+      barcode_transcriptomics_tissue = Sample_ID
+    ),
+    by = "svamp_ID"
+  )
+
+# meta data
+meta_data <- meta_data %>%
+  select(ID, Treatment, groups) %>%
+  left_join(., unique(select(s, ID = ID_, svamp_ID = ID)))
+
+# Transcriptomics samples wide overviw
+m <- mapping %>%
+  select(Sample_ID, svamp_ID_ = svamp_ID, DS_ID) %>%
+  mutate(ID_ = str_extract(DS_ID, "K\\d+|^\\d+")) %>%
+  left_join(
+    .,
+    select(meta_data, svamp_ID, ID_ = "ID", Treatment, groups),
+    by = "ID_"
+  ) %>%
+  mutate(timepoint = str_match(svamp_ID_, "(?:^|_)(BL|3M)(?:_|$)")[, 2]) %>%
+  mutate(timepoint = ifelse(is.na(.$timepoint), "BL", .$timepoint)) %>%
+
+  select(-Sample_ID, -DS_ID) %>%
+  # dplyr::summarise(n = dplyr::n(), .by = c(ID)) |>
+  # dplyr::filter(n > 1L)
+  pivot_wider(
+    names_from = "timepoint",
+    values_from = "svamp_ID_",
+    values_fill = NA,
+    values_fn = list(svamp_ID_ = ~ paste(unique(.), collapse = ", "))
+  )
+```
+
+### get symbols for ensembel ids
+```{r gene-annotation}
+#############
+# LOAD DATA #
+#############
+counts_24P003 <- readRDS(paste0(input_dir, "Transcriptomics/counts.rds"))
+counts_23P074 <- readRDS(paste0(input_dir, "Transcriptomics/counts_23P074.rds"))
+# counts_comb <- readRDS("/Users/vilkal/Downloads/counts_comb.rds")
+
+####  Get symbol annotation
+# 1. Get Ensembl annotation
+mart <- useEnsembl("ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl")
+
+anno_ens <- getBM(
+  attributes = c("ensembl_gene_id", "entrezgene_id", "hgnc_symbol"),
+  mart = mart
+) %>%
+  as_tibble()
+
+# Collapse symbols and entrez IDs per gene
+anno_ens_mod <- anno_ens %>%
+  group_by(ensembl_gene_id) %>%
+  summarise(
+    symbol = paste(na.omit(unique(hgnc_symbol)), collapse = ","),
+    entrez = paste(na.omit(unique(entrezgene_id)), collapse = ","),
+    .groups = "drop"
+  )
+
+# 2. Get org.Hs.eg.db annotation
+anno_org <- AnnotationDbi::select(
+  org.Hs.eg.db,
+  keys = anno_ens$ensembl_gene_id,
+  columns = c("SYMBOL", "ENTREZID"),
+  keytype = "ENSEMBL"
+) %>%
+  as_tibble()
+
+# Collapse org.Hs.eg.db annotations
+anno_org_mod <- anno_org %>%
+  group_by(ENSEMBL) %>%
+  summarise(
+    ensembl = ENSEMBL[1],
+    symbol = paste(na.omit(unique(SYMBOL)), collapse = ","),
+    entrez = paste(na.omit(unique(ENTREZID)), collapse = ","),
+    .groups = "drop"
+  )
+
+# 3. Fill missing symbols and entrez IDs using anno_ens_mod
+anno_org_mod <- anno_org_mod %>%
+  left_join(
+    anno_ens_mod,
+    by = c("ensembl" = "ensembl_gene_id"),
+    suffix = c("", "_ens")
+  ) %>%
+  mutate(
+    symbol = if_else(symbol == "" | is.na(symbol), symbol_ens, symbol),
+    entrez = if_else(entrez == "" | is.na(entrez), entrez_ens, entrez)
+  ) %>%
+  dplyr::select(ensembl, symbol, entrez)
+
+# 4. Annotate counts table
+counts_24P003 <- counts_24P003 %>%
+  as_tibble() %>%
+  left_join(., anno_org_mod, by = "ensembl", ) %>%
+  relocate(symbol, entrez, .after = Length) %>%
+  dplyr::select(-rn)
+
+counts_23P074 <- counts_23P074 %>%
+  as_tibble() %>%
+  dplyr::select(-rn)
+
+# save count tables with NGI_ID
+write_csv(counts_23P074, "../Tidy_data/Transcriptomics/Counts_23P074.csv")
+write_csv(counts_24P003, "../Tidy_data/Transcriptomics/Counts_24P003.csv")
+# write_csv(anno_org_mod, "data/gene_annotation.csv")
+```
+
+### Combine counts tabels and replace NGI id with svamp ids
+```{r combine-and-save-trx-data}
+#############
+# LOAD DATA #
+#############
+mapping <- read_csv("../Tidy_data/Transcriptomics/Mapping_all_trx_samples.csv")
+counts_23P074 <- read_csv("../Tidy_data/Transcriptomics/Counts_23P074.csv")
+counts_24P003 <- read_csv("../Tidy_data/Transcriptomics/Counts_24P003.csv")
+anno_org_mod <- read_csv("data/gene_annotation.csv")
+
+ID_list <- set_names(mapping$svamp_ID, mapping$NGI_ID)
+
+counts_23P074 <- counts_23P074 %>%
+  rename_with(~ ID_list[.x], .cols = starts_with("P"))
+
+counts_24P003 <- counts_24P003 %>%
+  rename_with(~ ID_list[.x], .cols = starts_with("P"))
+
+# combine count tables
+# check if anny ensembl id's differ
+setdiff(counts_23P074$ensembl, counts_24P003$ensembl)
+setdiff(counts_24P003$ensembl, counts_23P074$ensembl)
+
+# 1. Select metadata columns from counts
+counts_metadata <- counts_23P074 %>%
+  select(ensembl, Chr, Start, End, Strand, Length)
+
+# 2. Select count columns based on sample sheet
+count_data <- bind_cols(counts_23P074, counts_24P003) %>%
+  select(all_of(mapping$svamp_ID)) %>%
+  # colnames(.)
+  select(sort(colnames(.)))
+
+# 3. Combine metadata and count values
+counts_comb <- bind_cols(counts_metadata, count_data)
+
+# 4. Join with annotations (left join on ensembl)
+counts_comb <- counts_comb %>%
+  left_join(anno_org_mod, by = "ensembl") %>%
+  relocate(symbol, entrez, .after = "Length")
+
+# save count tables with svamp_ID
+write_csv(
+  counts_comb,
+  "../Tidy_data/Transcriptomics/Counts_all_trx_samples.csv"
+)
+# counts_comb <- read_csv("Tidy_data/Counts_trx.csv")
+```
+
+## Format Metagenome data
+
+### Format Metagenome sample info
+```{r fix-metadata-metagenomics}
+meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp.xlsx"
+m_path <- "../data/Metagenomics/Identification_samples_RVVC_Gabriella.csv"
+m2_path <- "../data/Metagenomics/Sample_identification_CHG_FLZ.csv"
+
+meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1)
+smpl_IDs <- read_xlsx(paste0(input_dir, "svamp_ID_list.xlsx")) %>%
+  select(SD_ID = "patient_ID", svamp_ID, sample_ID = "barcode_shotgun_swab")
+m_data <- read_csv(m_path, col_types = "ccccc")
+m2_data <- read_csv(m2_path, col_types = "ccccc")
+
+m <- full_join(m2_data, m_data, by = join_by(sample_ID, DS_ID))
+
+# This skips formatting for `tribble()` and its arguments
+
+m_ <- m %>%
+  # mutate(
+  #   # adds missing values from the two data frames:
+  #   Treatment = case_when(
+  #     is.na(.$Treatment) & !(is.na(.$group_assigned)) ~ "cross-sectional",
+  #     .default = Treatment
+  #   ),
+  #   Timepoint = case_when(
+  #     is.na(.$Timepoint) & !(is.na(.$group_assigned)) ~ "baseline",
+  #     .default = Timepoint
+  #   ),
+  #   .before = "DS_ID"
+  # ) %>%
+  left_join(smpl_IDs, ., by = "sample_ID") %>%
+  mutate(ID = str_extract(svamp_ID, "S\\d\\d")) %>%
+  mutate(
+    group_assigned = first(na.omit(group_assigned)),
+    "Shotgun (n)" = dplyr::n(),
+    .by = c(ID)
+  ) %>%
+  relocate(ID, DS_ID, svamp_ID, .after = "sample_ID") %>%
+  rename(barcode_shotgun_swab = "sample_ID") %>%
+  {
+    . ->> meta_long
+  } %>%
+  select(-Group_assigned, -DS_ID) %>% # , -sample_ID
+  mutate(value = "1") %>%
+  pivot_wider(
+    names_from = "Timepoint",
+    values_from = "sample_ID",
+    values_fill = "0"
+  )
+
+write_csv(
+  meta_long,
+  "../Tidy_data/Metagenomics/Key_all_shotgun_vagswab_samples.csv"
+)
+# meta_long <- read_csv("../Tidy_data/Metagenomics/Key_all_shotgun_vagswab_samples.csv")
+```
+
+```{r meta-data-meatgenomics}
+
+smpl_IDs <- read_xlsx(
+  paste0(input_dir, "svamp_ID_list.xlsx"),
+  na = "NA"
+) %>%
+  select(DS_ID = "patient_ID", svamp_ID, barcode_shotgun_swab) %>%
+  filter(!(is.na(barcode_shotgun_swab))) %>%
+  mutate(
+    ID = str_extract(svamp_ID, "S\\d\\d"),
+    .after = "barcode_shotgun_swab"
+  ) # %>% will add clinical info later
+# left_join(
+#   .,
+#   select(meta_long, barcode_shotgun_swab, Timepoint),
+#   by = c("barcode_shotgun_swab")
+# ) %>%
+# mutate(
+#   Timepoint = case_when(
+#     str_detect(svamp_ID, "_BL") | !str_detect(svamp_ID, "_") ~ "baseline",
+#     str_detect(svamp_ID, "_1W$") ~ "1_week",
+#     str_detect(svamp_ID, "_3M$") ~ "3_month",
+#     str_detect(svamp_ID, "_6M$") ~ "6_month",
+#     TRUE ~ Timepoint # fallback to existing value
+#   )
+# ) %>%
+# left_join(., select(gr_data, ID = "svamp_ID", group), by = c("ID"))
+
+```
+
+### Vagswab data
+#### Format count table
+
+```{r Metagenom-vagswab}
+#############
+# LOAD DATA #
+#############
+run1_path <- paste0(input_dir, "Metagenomics/all_samples.metaphlan-4.tsv")
+run2_path <- paste0(
+  input_dir,
+  "Metagenomics/all_samples.metaphlan_mikantarell_add19.tsv"
+)
+mbio_path <- paste0(input_dir, "Metagenomics/250321_mpa4_no_run_repeat.csv")
+
+run1_data <- read_tsv(run1_path, skip = 1)
+run2_data <- read_tsv(run2_path, skip = 1)
+mbio_data_filt <- read_csv(mbio_path)
+
+get_id.fun <- function(ID) {
+  id <- str_extract(ID, "(?<=__).+(?=__)")
+  name_df <- tibble(name = id) %>%
+    mutate(
+      uniqe_name = if (n() == 1) name else str_c(name, "_", row_number()),
+      .by = "name"
+    )
+  names <- name_df$uniqe_name
+  return(names)
+}
+
+na_id <- c("FF06741471", "FF06741465")
+na_n <- c("KX63", "KX64")
+ctrls <- select(run1_data, -starts_with(c("FF", "FS"))) %>% names(.)[-1]
+ID_list <- set_names(
+  c(smpl_IDs$svamp_ID, na_n),
+  c(smpl_IDs$barcode_shotgun_swab, na_id)
+)
+
+run1_data <- run1_data %>%
+  # captures the barcode id
+  rename_with(~ get_id.fun(.x), .cols = starts_with("242")) %>%
+  # exhange the barcode with the svamp_ID and
+  # fix uniqe sample names:
+  rename_with(~ ID_list[.x], .cols = starts_with("F"))
+
+run2_data <- run2_data %>%
+  rename_with(~ get_id.fun(.x), .cols = starts_with("242")) %>%
+  rename_with(~ ID_list[.x], .cols = starts_with("F"))
+
+colnames(run1_data)
+colnames(run2_data)
+
+# combine count tables
+# check if anny ensembl id's differ
+intersect(run1_data$clade_name, run2_data$clade_name)
+
+setdiff(run1_data$clade_name, run2_data$clade_name)
+setdiff(run2_data$clade_name, run1_data$clade_name)
+
+# lenght of combined data frame should be:
+nrow(run1_data) + length(setdiff(run2_data$clade_name, run1_data$clade_name))
+
+# Safely combine using full_join by clade_name
+merged_counts <- full_join(
+  run1_data,
+  run2_data,
+  by = "clade_name",
+  suffix = c("", "_run2")
+) %>%
+  # replace NAs with zeros:
+  mutate(across(where(is.numeric), ~ replace_na(.x, 0))) %>%
+  select(clade_name, contains("ex"), contains("seq"), sort(colnames(.)))
+
+
+colnames(merged_counts)
+write_csv(
+  merged_counts,
+  "../Tidy_data/Metagenomics/Metageonome_all_vagswab_metaphlan.csv"
+)
+# vagswab_counts <- read_csv("../Tidy_data/Metagenomics/Metageonome_all_vagswab_metaphlan.csv")
+```
+
+#### Format count info table
+```{r count-info-vagswab}
+################################
+# COMBINE COUNT VAGSWAB TABLES #
+################################
+read_stat_path <- paste0(
+  input_dir,
+  "Metagenomics/preprocessing_read_counts.tsv"
+)
+read_stat2_path <- paste0(
+  input_dir,
+  "Metagenomics/preprocessing_read_counts_mikantarell_add19.tsv"
+)
+read_stat1 <- read_tsv(read_stat_path)
+read_stat2 <- read_tsv(read_stat2_path)
+
+# adds a number suffix to duplicate controlls and _run2 to samples
+get_unique_id.fun <- function(ID) {
+  # id <- str_extract(ID, "(?<=__).+(?=__)") used for barcode_shotgun_swab column
+  name_df <- tibble(name = ID) %>%
+    mutate(
+      uniqe_name = if (n() == 1) name else str_c(name, "_", row_number()),
+      .by = "name"
+    ) %>%
+    mutate(
+      uniqe_name = case_when(
+        str_starts(uniqe_name, "S") & str_ends(uniqe_name, "_1") ~
+          str_remove(uniqe_name, "_1$"),
+        str_starts(uniqe_name, "S") & str_ends(uniqe_name, "_2") ~
+          str_replace(uniqe_name, "_2$", "_run2"),
+        TRUE ~ uniqe_name
+      )
+    )
+  names <- name_df$uniqe_name
+  return(names)
+}
+
+n <- names(select(vagswab_counts, contains(c("ex", "seq"))))
+s <- str_remove(n, "_\\d$")
+n <- set_names(n, s)
+
+na_id <- c("FF06741471" = "KX63", "FF06741465" = "KX64")
+
+read_stat <- read_stat1 %>%
+  bind_rows(., read_stat2) %>%
+  mutate(barcode_shotgun_swab = str_extract(Sample, "(?<=__).+(?=__)")) %>%
+  left_join(., smpl_IDs, by = "barcode_shotgun_swab") %>%
+  relocate(
+    barcode_shotgun_swab,
+    DS_ID,
+    svamp_ID,
+    ID,
+    #Timepoint,
+    #group,
+    .after = "Sample"
+  ) %>%
+  # fill in the control IDs in the svamp_ID column
+  mutate(
+    svamp_ID = if_else(
+      str_detect(barcode_shotgun_swab, "_"),
+      barcode_shotgun_swab,
+      svamp_ID
+    )
+  ) %>%
+  # fix uniqe control and sample names:
+  mutate(
+    svamp_ID = get_unique_id.fun(svamp_ID),
+    barcode_shotgun_swab = if_else(
+      str_detect(barcode_shotgun_swab, "_"),
+      NA,
+      barcode_shotgun_swab
+    )
+  ) %>%
+  mutate(
+    svamp_ID = if_else(
+      str_detect(svamp_ID, "_3$"),
+      str_replace(svamp_ID, "_3$", ""),
+      svamp_ID
+    )
+  ) %>%
+  # adds the two samples with weired ids:
+  mutate(
+    svamp_ID = ifelse(
+      is.na(.$svamp_ID),
+      na_id[.$barcode_shotgun_swab],
+      .$svamp_ID
+    ),
+    DS_ID = ifelse(is.na(.$svamp_ID), na_id[.$barcode_shotgun_swab], .$DS_ID)
+  )
+
+setdiff(names(ID_list), read_stat$sample_ID)
+
+# add CST types
+CST <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metagenomics/260122_CST_output_ALL.csv"
+
+ex <- tibble(
+  svamp_ID = c(
+    "S87_BL_run2",
+    "S90_BL_run2",
+    "S89_BL_run2",
+    "S83_BL_run2",
+    "S85_BL_run2",
+    "S15"
+  ),
+  CST = c("IV-B", "I", "III", "III", "IV-B", "IV-C"),
+  subCST = c("IV-B", "I-B", "III-B", "III-B", "IV-B", "IV-C3")
+)
+
+CST_data <- read_csv(CST) %>%
+  select(svamp_ID = sampleID, CST, subCST) %>%
+  bind_rows(., ex)
+
+r <- read_stat %>% left_join(., CST_data, by = "svamp_ID") %>%
+  arrange(svamp_ID)
+
+# save file
+write_csv(
+  r,
+  "../Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv"
+)
+# read_stat <- read_csv("../Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv")
+# read_stat <- read_stat %>% select(-CST, -subCST)
+
+```
+
+S10 and S15 was exluded due to poor quality
+(S10 due to too few counts and S15 due to total abundance < 60% after taxa filtering)
+S86_1W stoped coming after two weeks
+S65_3M missed the 3m visit
+
+### Tissue data
+#### Format count table
+
+```{r Metagenome-tissue}
+smpl_barcodes <- read_xlsx(
+  paste0(input_dir, "Registrering Provrör ID CHLORHEX.xlsx"),
+  skip = 1
+)
+mpath1 <- "../data/Metagenomics/biopsi/MGI_20241129_R1100600190018_E250043326 & E250043278.csv"
+mpath2 <- "../data/Metagenomics/biopsi/BEA23P074_tissuesamples.csv"
+mpath3 <- "../Tidy_data/Transcriptomics/Mapping_all_trx_samples.csv"
+
+#############
+# LOAD DATA #
+#############
+
+run1_path <- "../data/Metagenomics/biopsi/all_samples.metaphlantissue_mikantarell.csv"
+run2_path <- "../data/Metagenomics/biopsi/all_samplesmetaphlantissuemikantarell.csv"
+run1_data <- read_delim(run1_path, delim = ";")
+run2_data <- read_delim(run2_path, delim = ";")
+
+# run1_data and run2_data both contain 130 sample, however according to the
+# sample id sheet from sequencing team "MGI_20241129_R1100600190018_E250043326 & E250043278.csv"
+# there are only  49 (run 1, E250043278) and 43 (run 1, E250043326). Which means a total of 92 samples
+# pluss 2 controls
+# the remaning samples are probably from other projects that was sequenced at the same time
+
+sample_info <- read_delim(mpath1, delim = ";") %>%
+  filter(!is.na(adapter_id)) %>%
+  mutate(Flowcell_L1_bc = paste0(flowcell_id, "_L01_", adapter_id)) %>% #92 samples
+  # Flowcell_L1_bc and BEA_ID in this file has leading zeros, other files dont have this:
+  mutate(
+    sample_id = gsub("_0", "_", .$sample_id),
+    Flowcell_L1_bc = gsub("_0", "_", .$Flowcell_L1_bc)
+  )
+
+meta2 <- read_delim(delim = ";", mpath2)
+meta3 <- read_csv(mpath3)
+smpl_IDs <- read_xlsx(paste0(input_dir, "svamp_ID_list.xlsx"))
+
+#######################
+# COMBINE SAMPLE INFO #
+#######################
+
+listn <- c(
+  "BEA24P003_11" = "25:02",
+  "BEA24P003_12" = "K33",
+  "BEA24P003_22" = "29:02"
+)
+
+smplID <- sample_info %>%
+  select(
+    Flowcell_L1_bc,
+    extraction_plate_id,
+    BEA_ID = "sample_id",
+    not_sequenced
+  ) %>%
+
+  # add barcode information:
+  left_join(
+    .,
+    select(meta2, BEA_ID = "BEAID", barcode_shotgun_tissue = "Vial_number"),
+    by = "BEA_ID"
+  ) %>%
+
+  # add study ID from the trx sample sheet:
+  left_join(., select(meta3, BEA_ID, DS_ID), by = "BEA_ID") %>%
+
+  # add missing barcode information:
+  left_join(
+    .,
+    select(smpl_IDs, barcode = barcode_shotgun_tissue, DS_ID = patient_ID),
+    by = c("DS_ID")
+  ) %>%
+  mutate(
+    barcode_shotgun_tissue = ifelse(
+      is.na(.$barcode_shotgun_tissue),
+      .$barcode,
+      .$barcode_shotgun_tissue
+    )
+  ) %>%
+  # add control names
+  mutate(
+    barcode_shotgun_tissue = ifelse(
+      is.na(.$barcode_shotgun_tissue),
+      .$BEA_ID,
+      .$barcode_shotgun_tissue
+    )
+  ) %>%
+  select(-DS_ID, -barcode) %>%
+  left_join(
+    .,
+    select(smpl_IDs, DS_ID = patient_ID, svamp_ID, barcode_shotgun_tissue),
+    by = "barcode_shotgun_tissue"
+  ) %>%
+
+  mutate(
+    DS_ID = ifelse(is.na(.$DS_ID), .$BEA_ID, .$DS_ID),
+    svamp_ID = ifelse(is.na(.$svamp_ID), .$BEA_ID, .$svamp_ID)
+  ) %>%
+  filter(!(BEA_ID == "0")) %>%
+  #dplyr::summarise(n = dplyr::n(), .by = c("svamp_ID")) |>
+  #dplyr::filter(n > 1L) %>%
+  unique()
+
+write_csv(
+  smplID,
+  "../Tidy_data/Metagenomics/Key_all_shotgun_tissue_samples.csv"
+)
+# smplID <- read_csv( "../Tidy_data/Metagenomics/Key_all_shotgun_tissue_samples.csv")
+
+########################################
+# RENAME COULMS OF COUNT TISSUE TABLES #
+########################################
+# the count tables was delivered from the pipline with ids consisting of the flow cell id pluss the adapter id
+# this needed to be replaced with the new study ID that Margaux have created
+all_samples <- c(colnames(run1_data)[-1], colnames(run1_data)[-1])
+our_samples <- all_samples[all_samples %in% smplID$Flowcell_L1_bc]
+setdiff(smplID$Flowcell_L1_bc, our_samples)
+
+# Ensure svamp_IDs are unique by appending a suffix to duplicates
+svamp_ID_unique <- make.unique(smplID$svamp_ID, sep = "_extr")
+
+# Create named vector: names = barcodes, values = unique svamp_IDs
+ID_list <- set_names(svamp_ID_unique, smplID$Flowcell_L1_bc)
+
+
+run1_data <- run1_data %>% # 48 samples
+  # selects just the samples that belong to our project:
+  select(clade_name, any_of(names(ID_list))) %>%
+  # exhange the barcode with the svamp_ID
+  rename_with(~ ID_list[.x], .cols = starts_with("E25"))
+
+run2_data <- run2_data %>% # 48 samples
+  # selects just the samples that belong to our project:
+  select(clade_name, any_of(names(ID_list))) %>%
+  # exhange the barcode with the svamp_ID
+  rename_with(~ ID_list[.x], .cols = starts_with("E25"))
+
+# total of 96 samples
+#
+
+###############################
+# COMBINE COUNT TISSUE TABLES #
+###############################
+# combine count tables
+# check if anny ensembl id's differ
+intersect(run1_data$clade_name, run2_data$clade_name)
+
+setdiff(run1_data$clade_name, run2_data$clade_name)
+setdiff(run2_data$clade_name, run1_data$clade_name)
+
+# lenght of combined data frame should be:
+nrow(run1_data) + length(setdiff(run2_data$clade_name, run1_data$clade_name))
+
+# Safely combine using full_join by clade_name
+merged_counts <- full_join(
+  run1_data,
+  run2_data,
+  by = "clade_name",
+  suffix = c("", "_run2")
+) %>%
+  # replace NAs with zeros:
+  mutate(across(where(is.numeric), ~ replace_na(.x, 0))) %>%
+  select(clade_name, contains("seq"), sort(colnames(.)))
+
+colnames(merged_counts)
+write_csv(
+  merged_counts,
+  "../Tidy_data/Metagenomics/Metageonome_all_tissue_metaphlan.csv"
+)
+
+# tissue_counts <- read_csv("../Tidy_data/Metagenomics/Metageonome_all_tissue_metaphlan.csv")
+
+```
+
+#### Format count info table
+
+```{r count-info-tissue}
+##################################
+# COMBINE READ COUNT TISSUE INFO #
+##################################
+# add read counts from processing file
+# add suffix to distingush non-uniqe sample names
+
+prepro_path1 <- "../data/Metagenomics/biopsi/preprocessing_read_counts_tissue_mikantarell.txt"
+prepro_path2 <- "../data/Metagenomics/biopsi/preprocessing_read_counts_tissue_mikantarell2.txt"
+
+prepro1 <- read_delim(prepro_path1, delim = "\t")
+prepro2 <- read_delim(prepro_path2, delim = "\t")
+# gr_data <- read_csv("../Tidy_data/Asigned_groups_info_all_samples.csv")
+
+prepro <- bind_rows(prepro1, prepro2) %>%
+  filter(Sample %in% names(ID_list)) %>%
+  rename(Flowcell_L1_bc = Sample) %>%
+  left_join(smplID, .) %>%
+  # dplyr::summarise(n = dplyr::n(), .by = c("Flowcell_L1_bc")) |>
+  # dplyr::filter(n > 1L) %>%
+  mutate(ID = str_extract(svamp_ID, "S\\d\\d"), .before = "DS_ID") %>%
+  # add "_extr1" to non uniqe svam_IDs:
+  mutate(svamp_ID = ID_list[.$Flowcell_L1_bc]) %>%
+  select(
+    Flowcell_L1_bc,
+    BEA_ID,
+    barcode_shotgun_tissue,
+    DS_ID,
+    svamp_ID,
+    everything()
+  ) %>%
+  mutate(
+    svamp_ID = get_unique_id.fun(svamp_ID),
+    barcode_shotgun_tissue = if_else(
+      str_detect(barcode_shotgun_tissue, "_"),
+      NA,
+      barcode_shotgun_tissue
+    )
+  )
+
+write_csv(prepro, "../Tidy_data/Metagenomics/Read_count_info_tissue.csv")
+```
+
+```{r merge-vagswab-and-tissue}
+key_vagswab <- read_csv(
+  "../Tidy_data/Metagenomics/Key_all_shotgun_vagswab_samples.csv"
+)
+key_tissue <- read_csv(
+  "../Tidy_data/Metagenomics/Key_all_shotgun_tissue_samples.csv"
+)
+
+intersect(key_vagswab$svamp_ID, key_tissue$svamp_ID)
+
+k <- key_vagswab %>%
+  full_join(
+    select(key_tissue, DS_ID, barcode_shotgun_tissue, BEA_ID, svamp_ID),
+    by = c("svamp_ID", "DS_ID")
+  ) %>%
+  #left_join(select(key_tissue, svamp_ID, BEA_ID), by = "svamp_ID") %>%
+  group_by(svamp_ID) %>%
+  summarise(
+    BEA_ID = paste(na.omit(unique(BEA_ID)), collapse = ", "),
+    across(everything(), ~ first(.x)),
+    .groups = "drop"
+  ) %>%
+  select(
+    ID,
+    DS_ID,
+    svamp_ID,
+    barcode_shotgun_swab = sample_ID,
+    barcode_shotgun_tissue,
+    BEA_ID,
+    everything()
+  )
+
+
+write_csv(k, "../Tidy_data/Metagenomics/Readcounts.csv")
+```
+
+### Functional metagenome data
+```{r functional-annotation}
+#############
+# LOAD DATA #
+#############
+# Biopsi samples
+tissue_run1 <- read_tsv(paste0(
+  input_dir,
+  "Metagenomics/Functional profiling/",
+  "all_samples.humann_pathabundance-5_tissue.txt"
+))
+tissue_run2 <- read_tsv(paste0(
+  input_dir,
+  "Metagenomics/Functional profiling/",
+  "all_samples.humann_pathabundance-1_tissue.txt"
+))
+
+# vagswab run 1
+vagswab_run1 <- read_tsv(paste0(
+  input_dir,
+  "Metagenomics/Functional profiling/",
+  "all_samples.humann_pathabundance-4_run1.txt"
+))
+# vagswab run 2 additional 19 samples
+vagswab_run2 <- read_tsv(paste0(
+  input_dir,
+  "Metagenomics/Functional profiling/",
+  "all_samples.humann_pathabundance-4_run2.txt"
+))
+
+######################
+# MERGE VAGSWAB DATA #
+######################
+# Safely combine using full_join by Pathway
+tissue_data <- full_join(
+  tissue_run1,
+  tissue_run2,
+  by = "# Pathway",
+  suffix = c("", "_run2")
+) %>%
+  # replace NAs with zeros:
+  mutate(across(where(is.numeric), ~ replace_na(.x, 0))) %>%
+  select(`# Pathway`, contains("Ctrl"), sort(colnames(.)))
+
+colnames(tissue_data)
+
+# Safely combine using full_join by Pathway
+vagswab_data <- full_join(
+  vagswab_run1,
+  vagswab_run2,
+  by = "# Pathway",
+  suffix = c("", "_run2")
+) %>%
+  # replace NAs with zeros:
+  mutate(across(where(is.numeric), ~ replace_na(.x, 0))) %>%
+  select(`# Pathway`, contains("ex"), contains("seq"), sort(colnames(.)))
+
+colnames(vagswab_data)
+
+
+```
+
+```{r}
+################
+# GET SVAMP ID #
+################
+tissue_count_info <- read_csv(
+  "../Results/Tissue_QC/Read_count_info_tissue_no_spikein.csv"
+) %>%
+  # remove samples that have zero bacterial reads after spike-in
+  filter(bac_counts_no_spikein > 2000)
+vagswab_count_info <- read_csv(
+  "../Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv"
+)
+
+ID_tissue <- set_names(
+  tissue_count_info$svamp_ID,
+  tissue_count_info$Flowcell_L1_bc
+)
+ID_vagswab <- set_names(vagswab_count_info$svamp_ID, vagswab_count_info$Sample)
+
+setdiff(gsub("_Abundance", "", colnames(tissue_data)), names(ID_tissue))
+intersect(gsub("_Abundance", "", colnames(tissue_data)), names(ID_tissue))
+
+# rename columns with svamp ID
+# tissue
+# NB! we have to think through if it is nessecary to do some sort of filtering of this data before use
+# I dont know if this is with or withouth the spike-in
+# also only 47 samples match, I think we are missing a file with the other samples
+tissue_data <- tissue_data %>%
+  rename_with(
+    ~ str_replace(.x, "_Abundance", ""),
+    .cols = starts_with("E25")
+  ) %>%
+  rename_with(
+    ~ ID_tissue[.x],
+    .cols = names(.)[names(.) %in% names(ID_tissue)]
+  ) %>%
+  # remove samples that are not ours or had zero counts after spike-in removal
+  select(-starts_with("E25")) %>%
+  # order columns
+  select(`# Pathway`, contains("Ctrl"), sort(colnames(.)))
+
+
+vagswab_data <- vagswab_data %>%
+  rename_with(
+    ~ str_replace(.x, "_Abundance", ""),
+    .cols = starts_with("242")
+  ) %>%
+  rename_with(~ ID_vagswab[.x], .cols = starts_with("242"))
+
+############################
+# SAVE PATH ABUNDANCE DATA #
+############################
+write_csv(
+  tissue_data,
+  "../Tidy_data/Metagenomics/Functional_annotation_all_tissue.csv"
+)
+write_csv(
+  vagswab_data,
+  "../Tidy_data/Metagenomics/Functional_annotation_all_vagswab.csv"
+)
+```
+
+
+## Format Metabolomics data
+```{r Metabolom}
+#############
+# LOAD DATA #
+#############
+mbol_path <- "../data/Metabolomics/UTF-8SMC_P0800_GCMS_Data.xlsx"
+gr_id_path <- "../Tidy_data/Asigned_groups_info_all_samples.csv"
+
+mbol_data <- read_xlsx(mbol_path)
+smpl_IDs <- read_xlsx(paste0(input_dir, "svamp_ID_list.xlsx")) %>%
+  select(svamp_ID, barcode_metabolomics) %>%
+  filter(!(is.na(.$barcode_metabolomics)))
+gr_id <- read_csv(gr_id_path)
+
+left_join(
+  .,
+  select(smpl_IDs, svamp_ID, DS_ID = "patient_ID"),
+  by = "DS_ID"
+)
+
+mbol_data <- mbol_data %>%
+  select(
+    `Compound Name`,
+    #DS_ID = `Subject ID`,
+    barcode_metabolomics = "customer sample Identifier",
+    `Injection Standard MS`:`N-Acetylneuraminic Acid`
+  ) %>%
+  left_join(., smpl_IDs, by = "barcode_metabolomics") %>%
+  relocate(svamp_ID, .before = "barcode_metabolomics") %>%
+  mutate(
+    svamp_ID = ifelse(
+      grepl("^QC\\d", .$`Compound Name`),
+      .$`Compound Name`,
+      .$svamp_ID
+    )
+  )
+
+write_csv(
+  mbol_data,
+  "../Tidy_data/Metabolomics/Metabolom_all_samples.csv"
+)
+```
+
+## Cleaning up data
+The metabolomic data was provided in a unformatted table, so compiling the data into appropriate format is required. Differences in sample number, metabolite nomenclature, etc.
+```{r}
+#############
+# LOAD DATA #
+#############
+#---  Load sample info ----
+smpl_IDs <- read_xlsx("../data/svamp_ID_list.xlsx") %>%
+  select(svamp_ID, barcode_metabolomics)
+
+#---  Load raw file from metabolomics sequencing facility ----
+mbol_path <- "../data/Metabolomics/UTF-8SMC_P0800_GCMS_Data.xlsx"
+RAW <- read_xlsx(mbol_path)
+
+
+##############
+# CLEAN DATA #
+##############
+# this code is based on Paulos analysis of the metabolomics data
+# View first few column names and first column values
+head(colnames(RAW), 30)
+head(RAW[[1]], 30)
+
+#--- 1️⃣ Identify structure of the table ----
+# Find where annotation columns end (contains "order" keyword)
+col_boundary <- which(str_detect(
+  colnames(RAW),
+  regex("order", ignore_case = TRUE)
+))
+# Find where sample data begins (first row that starts with "1" in first column)
+row_boundary <- which(RAW[[1]] == "1")[1] - 1
+
+#--- 2️⃣ Split into three logical components ----
+# Sample metadata (left block, below header)
+metadata <- RAW %>%
+  slice((row_boundary + 1):n()) %>%
+  select(all_of(1:col_boundary))
+
+# Compound annotations (top block, right side)
+annotations_raw <- RAW %>%
+  slice(1:row_boundary) %>%
+  select(1, all_of((col_boundary + 1):ncol(RAW)))
+#select(1, all_of((col_boundary + 1):ncol(RAW)))
+
+# Measurement matrix (sample × metabolite intensities)
+matrix_data <- RAW %>%
+  slice((row_boundary + 1):n()) %>%
+  select(
+    `Compound Name`,
+    "barcode_metabolomics" = `customer sample Identifier`,
+    (col_boundary + 1):ncol(RAW)
+  ) %>%
+  left_join(., smpl_IDs, by = "barcode_metabolomics") %>%
+  relocate(svamp_ID, .before = "barcode_metabolomics") %>%
+  mutate(
+    svamp_ID = ifelse(
+      grepl("^QC\\d", .$`Compound Name`),
+      .$`Compound Name`,
+      .$svamp_ID
+    )
+  ) %>%
+  select(-`Compound Name`, -barcode_metabolomics) %>%
+  pivot_longer(cols = -svamp_ID, names_to = "Compund") %>%
+  pivot_wider(names_from = svamp_ID) %>%
+  select(Compund, starts_with("QC"), sort(colnames(.)))
+
+
+#--- 3️⃣ Build tidy annotation table ----
+# Extract selected annotation rows and pivot them into a tidy format
+annotation_table <- annotations_raw %>%
+  #rename(row_label=`GCMS-NA@NA`) %>%
+  slice(., c(2:6)) %>% # rows with HMDB, KEGG, PubChem, Mz, Rt
+  pivot_longer(-1, names_to = "names", values_to = "value") %>%
+  pivot_wider(names_from = "Compound Name", values_from = value) %>%
+  # Create uniqe compound IDs by using M/z and Rt
+  mutate(
+    Compound_ID = paste0(
+      "GCMS-",
+      round(as.numeric(`M/z (unique)`)),
+      "@",
+      round(as.numeric(`RI (resolved)`))
+    )
+  )
+
+#--- 4️⃣ Remove quality control compunds ----
+annotation_table <- annotation_table %>%
+  filter(!grepl("Standard", .$names))
+
+# ✅ Results:
+# metadata         → sample metadata (e.g. sample ID, run order)
+# matrix_data      → numeric matrix (samples × compounds)
+# annotation_table → clean annotation metadata per compound
+
+#############
+# SAVE DATA #
+#############
+write_csv(matrix_data, "../Tidy_data/Metabolomics/Metabolom_matrix.csv")
+write_csv(metadata, "../Tidy_data/Metabolomics/metabolomics_metadata.csv")
+write_csv(
+  annotation_table,
+  "../Tidy_data/Metabolomics/metabolomics_annotation.csv"
+)
+```
