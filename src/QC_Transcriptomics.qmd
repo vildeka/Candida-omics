@@ -579,10 +579,9 @@ samples <- colnames(countTable_final)
 intersect(samples, meta$svamp_ID)
 setdiff(samples, meta$svamp_ID)
 
-
 gr <- c("0", "1-3", "4-5")
 
-meta <- meta %>%
+meta_ <- meta %>%
   filter(svamp_ID %in% samples) %>%
   mutate(Clin_gr = factor(.$"Clin_gr", levels = gr)) %>%
   mutate(
@@ -592,17 +591,13 @@ meta <- meta %>%
     )
   )
 
-# change missing value NA to "NA"
-meta_ <- meta %>%
-  mutate(RVVC_AS = tidyr::replace_na(RVVC_AS, "NA"))
-
-design <- model.matrix(~RVVC_AS, data = meta_)
-rownames(design) <- meta$svamp_ID
+design <- model.matrix(~Clin_gr, data = meta_)
+rownames(design) <- meta_$svamp_ID
 batch <- meta$batch
 
 # remove batch effect
 expr_corrected <- removeBatchEffect(
-  cpm_log_TMM[, samples[-1]],
+  cpm_log_TMM[, rownames(design)],
   batch = batch,
   design = design
 )
@@ -616,8 +611,8 @@ plot_pca <- function(X, title) {
   pca_df <- data.frame(
     PC1 = pca$x[, 1],
     PC2 = pca$x[, 2],
-    batch = meta[["batch"]],
-    condition = meta[["RVVC_AS"]]
+    batch = meta_[["batch"]],
+    condition = meta_[["pos"]]
   )
 
   ggplot(pca_df, aes(x = PC1, y = PC2, color = batch, shape = condition)) +
@@ -627,7 +622,7 @@ plot_pca <- function(X, title) {
 }
 
 plot_pca(expr_corrected, "after")
-plot_pca(cpm_log_TMM[, samples[-1]], "before")
+plot_pca(cpm_log_TMM[, rownames(design)], "before")
 ```
 
 ### Save batch corrected and filtered and normalized expression values
@@ -807,7 +802,7 @@ select(
 
 ## Step 7: Differential Gene Expression analysis
 
-```{r functions}
+```{r functions-old}
 ##################
 # DEG's FUNCTION #
 ##################
@@ -852,19 +847,63 @@ edgR_dge.fun <- function(CountMatrix, gr, sample_df, confound = NULL) {
 }
 ```
 
+```{r functions}
+##################
+# DEG's FUNCTION #
+##################
+# sample_df <- meta_filt
+# gr <- "RVVC_pos"
+
+edgR_dge.fun <- function(CountMatrix, gr, sample_df, confound = NULL) {
+  #groups <- sample_df[, group]
+  groups <- pull(sample_df, gr)
+  n_gr <- length(na.omit(unique(groups)))
+
+  if (any(is.na(groups))) {
+    groups <- tidyr::replace_na(groups, "X")
+  }
+
+  if (!is.null(confound)) {
+    c <- "_conf"
+    design <- design
+  } else {
+    c <- "_no_conf"
+    design <- model.matrix(~groups, data = sample_df) # without confounders
+  }
+
+  colnames(design) <- sub("groups", "", colnames(design))
+  colnames(design) <- sub("\\(Intercept\\)", "Intercept", colnames(design))
+  #colnames(design) <- sub(" ", "_", colnames(design))
+
+  y <- DGEList(counts = CountMatrix, remove.zeros = T)
+  y <- calcNormFactors(y, method = "TMM")
+  y <- estimateGLMCommonDisp(y, design)
+  y <- estimateGLMTagwiseDisp(y, design)
+  fit <- glmFit(y, design)
+
+  lrt <- glmLRT(fit, coef = 2:n_gr) # with intercept
+  top <- topTags(lrt, adjust.method = "BH", n = "all", sort.by = "p.value")[[1]]
+  colnames(top) <- sub("groups", "", colnames(top))
+  top <- cbind(LogFC.intercept = 0, top) # with intercept
+  top <- rownames_to_column(top, var = "Genes")
+
+  return(list(design = design, y = y, fit = fit, lrt = lrt, top = top, c = c))
+}
+```
+
 ```{r dge-analysis}
 
 # nesscary only if you want to add confounders
 # design <- model.matrix(~ Clin_gr + `Age (years)`, data = meta)
 
 dge <- column_to_rownames(countTable_final, var = "symbol") %>%
-  edgR_dge.fun(., "RVVC_AS", meta, confound = NULL)
+  edgR_dge.fun(., "RVVC_pos", meta_, confound = NULL)
 ```
 
 ```{r top-DEG}
-# get DEGs for clin score 4-5
+# get DEGs for RVVCpos groups
 
-fc_cols <- sort(grep("logFC.groups", colnames(dge$top), value = TRUE))
+fc_cols <- sort(grep("logFC", colnames(dge$top), value = TRUE))
 
 DEG_list <- map(
   set_names(fc_cols),
@@ -903,7 +942,7 @@ D <- DEG_list %>%
   imap(., ~ arrange(.x, !!sym(.y)))
 
 names(D)
-D[[2]] %>%
+D[[3]] %>%
   knitr::kable(., digits = 1)
 ```
 
@@ -917,7 +956,7 @@ D[[2]] %>%
 
 # get filter genes from normalized matrix
 # logFC.groupsRVVC
-deg_matrix <- cpm_log_TMM[DEG_list[[names(D)[2]]]$Genes, meta$svamp_ID]
+deg_matrix <- cpm_log_TMM[DEG_list$logFC.RVVC_pos$Genes, meta_$svamp_ID]
 
 # use batch corrected expression values for heatmap?
 # deg_matrix <- expr_corrected[DEG_list[[names(D)[2]]]$Genes, meta$svamp_ID]
@@ -958,7 +997,7 @@ pal3 <- c("#9e8dec", "#cc93cf", "#a5c97b", "#de9548") #"#abcb4b" "#63d3b4" "#902
 
 
 # group information
-annot_col <- meta %>%
+annot_col <- meta_ %>%
   select(1:13, `Clinical score (0-5)`) %>%
   mutate(across(2:ncol(.), ~ factor(.x)))
 
