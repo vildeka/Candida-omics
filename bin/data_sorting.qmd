@@ -101,6 +101,12 @@ If this were the case still we would have needet to only select the genes that a
 At the time of writing (23.09.2026) The newest rlease is 116 from ensembl, however they are still using 113 at BEA so we will use this version when getting the symbols.
 
 #### Notes:
+I was a bit surprised to learn that all the samples from the first sequencing run were re run? at least there are two sequencing files that tassos calls "run1" and "run2". In a email he writes:
+
+Jo, det var prover som sekvenserades två gånger, så det borde vara samma prover. Så man borde sedan summera run1 och run2 counts när man importerart i R tex. Men som en sanity check, även om prover och genes skall vara desamma mellan båda, så borde de individuella counts variera något, so kolla i själva filerna för de första genera typ at det är olika counts mellan filerna.
+
+I dicided to simply select the counts generated from the second run. I dont know if this is stupid, but it was a lot less complicated. 
+
 There is something off with the naming of sample 12 or S69 it has 12:01 listed as baseline and a 1 month follow up which I have not seen any where else
 It turns out 12:01 is a baseline sample that was mistakenly named :01 instead of 02 as it should have ben, and the 1 week follow up should be three month follow up
 
@@ -155,6 +161,7 @@ mapping_id <- c(
 ) %>%
   map(., ~ read_tsv(paste0(input_dir, "F.Fagerstrom_", .x, "_sample_info.txt")))
 
+# we choose the second round of the BEA23P074 samples:
 mapping <- c("BEA23P074run2", "BEA24P003", "BEA26P064") %>%
   set_names() %>%
   map(., ~ read_tsv(paste0(input_dir, .x, "_mapping.txt"))) %>%
@@ -172,7 +179,7 @@ id <- imap(
   # } else {
   ~ mutate(
     .x,
-    ID = gsub("^[^_]*_[^_]*_", "", `User ID`),
+    ID = gsub("^[^_]*_[^_]*_(?:i_)?", "", `User ID`),
     `BEA ID` = sub("^(.*)_(\\d+)i?_.*$", "\\1_\\2", `User ID`),
     .keep = "unused"
   )
@@ -234,6 +241,33 @@ id <- id %>%
 id <- id %>%
   left_join(., select(smpl_IDs, `BEA ID`, RIN), by = "BEA ID") %>%
   left_join(., select(mapping, everything()), by = "NGI ID")
+```
+
+```{r update-svamp_ID_list.xlsx}
+svamp_ID_list <- read_xlsx(
+  "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/svamp_ID_list.xlsx",
+  na = "NA"
+) %>%
+  select(
+    patient_ID,
+    svamp_ID,
+    barcode_shotgun_tissue,
+    BEA_code_transcriptomics_tissue
+  )
+id_ <- id %>%
+  select(ID, File, `BEA ID`) %>%
+  group_by(ID) %>%
+  summarise(
+    `BEA ID` = paste(`BEA ID`, collapse = ", "),
+    File = paste(File, collapse = ", "),
+    .groups = "drop"
+  )
+svamp_ID_list_ <- svamp_ID_list %>%
+  left_join(
+    .,
+    select(id_, ID, File, `BEA ID`),
+    by = c("barcode_shotgun_tissue" = "ID")
+  )
 ```
 
 ### Step 2. Merge counts tabels and replace NGI id with svamp ids
