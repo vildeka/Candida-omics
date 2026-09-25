@@ -6,10 +6,11 @@
 ##################
 library(tidyverse)
 library(readxl)
-library(org.Hs.eg.db)
+# library(org.Hs.eg.db)
 library(biomaRt)
 
 select <- dplyr::select
+rename <- dplyr::rename
 # setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
 
 #########
@@ -19,7 +20,6 @@ input_dir <- "../data/"
 
 meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp.xlsx"
 mbol_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/UTF-8SMC_P0800_GCMS_Data.xlsx"
-
 ```
 
 To determine the groups you need column from the clinical file
@@ -82,13 +82,37 @@ write_csv(gr_data, "../Tidy_data/Asigned_groups_info_all_samples.csv")
 
 ## Format transcriptomics data
 
+Steps performed bellow:
+1. Combine all transcriptomics related information into one mapping file for all three runs
+2. Merge datasets
+3. Annotate (add symbols) for all datasets using Ensembl 113
+
+The two first sequencing runs were orginaly referenced against version 101 of the Ensembl reference genome.
+However, after writing to Tassos, he re-generated the counts files for the first two runs from the new (113) reference.
+This makes it a lot easier to merge the three dataset as they now have identical rows.
+
+Originaly the number of genes present in the older sequencing runs was 60671 genes vs 78932 for the new, 
+because the counts were generated against differnt versions of the Ensembl reference (101 and 113):
+    24P003  → Homo_sapiens.GRCh38.101  
+    23P074  → Homo_sapiens.GRCh38.101  
+    26P064  → Homo_sapiens.GRCh38.113
+If this were the case still we would have needet to only select the genes that are present in both versions.
+
+At the time of writing (23.09.2026) The newest rlease is 116 from ensembl, however they are still using 113 at BEA so we will use this version when getting the symbols.
+
+#### Notes:
 There is something off with the naming of sample 12 or S69 it has 12:01 listed as baseline and a 1 month follow up which I have not seen any where else
 It turns out 12:01 is a baseline sample that was mistakenly named :01 instead of 02 as it should have ben, and the 1 week follow up should be three month follow up
-Additionaly the smaple "S75_BL" is called "S75_Bl" in the metadata sheet so I had to also fix this here
+
+NB! Tassos writes:
+BEA24P003_28 is FF06580592 in the F.Fagerstrom_24_07_sample_info.txt file but
+BEA24P003_28 is FF06580610 in meta
+based on the "Registrering Provrör ID CHLORHEX.xlxs" files it should be FF06580610
+I have now updated F.Fagerstrom_24_07_sample_info.txt with the correct information
 
 This is recitified bellow
 
-```{r fix-mapping-files} 
+```{r load-trx-data}
 ##################
 # LOAD LIBRARIES #
 ##################
@@ -97,204 +121,179 @@ library(biomaRt)
 library(org.Hs.eg.db)
 library(AnnotationDbi)
 
-#############
-# LOAD DATA #
-#############
+#############################
+# 1. Load count data #
+#############################
+input_dir <- "../data/Transcriptomics/"
+files <- c(
+  counts_23P074 = "BEA23P074run2_subreadCounts_hg38ens_minus_frag.txt",
+  counts_24P003 = "BEA24P003_subreadCounts_hg38ens_minus_frag.txt",
+  counts_26P064 = "BEA26P064_subreadCounts_hg38ens_minus_frag.txt"
+)
+
+counts <- map(
+  files,
+  ~ read_delim(
+    paste0(input_dir, .x),
+    delim = "\t",
+    comment = "#"
+  ) %>%
+    rename(ensembl = Geneid)
+)
+
+######################
+# Load Mapping files #
+######################
 # NB! I had to add a 0 to the front of some of the patient_ID with numbers less than 10 (02, 03, 07, 09)
 # to the svamp_ID_list.xlsx from Margaux
-smpl_IDs <- read_xlsx(paste0(input_dir, "svamp_ID_list.xlsx"))
-smpl_barcodes <- read_xlsx(
-  paste0(input_dir, "Registrering Provrör ID CHLORHEX.xlsx"),
+# smpl_IDs <- read_xlsx(paste0(input_dir, "svamp_ID_list.xlsx"))
+smpl_IDs <- read_xlsx(
+  "../Tidy_data/Transcriptomics/BEA_Extraction_RNA_DNA_QC.xlsx",
   skip = 1
 )
-meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp.xlsx"
-meta_trx <- read_xlsx(
-  meta_path,
-  sheet = "Transcriptomics long",
-  skip = 2,
-  na = "NA"
+
+mapping_id <- c(
+  BEA23P074run2 = "23",
+  BEA24P003 = "24_07",
+  BEA26P064 = "26_31"
 ) %>%
-  filter(!(grepl("\\*", .$BEA_ID)))
+  map(., ~ read_tsv(paste0(input_dir, "F.Fagerstrom_", .x, "_sample_info.txt")))
 
-mapping_23P074 <- readRDS(paste0(input_dir, "Transcriptomics/smpl_23P074.rds"))
-mapping_24P003 <- read_tsv(
-  paste0(input_dir, "Transcriptomics/F.Fagerstrom_24_07_sample_info.txt")
-)
-mapping_24P003_ <- read_tsv(paste0(input_dir, "Transcriptomics/mapping.txt"))
+mapping <- c("BEA23P074run2", "BEA24P003", "BEA26P064") %>%
+  set_names() %>%
+  map(., ~ read_tsv(paste0(input_dir, .x, "_mapping.txt"))) %>%
+  bind_rows() %>%
+  mutate(`NGI ID` = str_extract(File, "^[^_]+_[^_]+"), .after = "File")
 
-# NB! Tassos writes:
-# BEA24P003_28 is FF06580592 from the ngi
-# BEA24P003_28 is FF06580610 in meta
-# based on the "Registrering Provrör ID CHLORHEX.xlxs" files it should be FF06580610
+# m <- readRDS(paste0(input_dir, "smpl_23P074.rds")) %>%
+#   select(NGI_ID, User_ID)
+```
 
-# Also BEA23P074_23, BEA23P074_3, BEA23P074_30, BEA23P074_20, BEA23P074_21 were sequenced in both runs
-# for batch correction, meaning they have different NGI_ID but same BEA_ID
+### Step 1. Combine all transcriptomics related information
 
-# Not sequenced due to low RIN values (n=10)
-# BEA23P074_1, BEA23P074_2, BEA23P074_5, BEA23P074_6, BEA23P074_13, BEA23P074_36, BEA23P074_40,
-# BEA24P003_11, BEA24P003_12, BEA24P003_22
-
-batch <- c(
-  "BEA23P074_23",
-  "BEA23P074_3",
-  "BEA23P074_30",
-  "BEA23P074_20",
-  "BEA23P074_21"
-)
-
-mapping_24P003_ <- mapping_24P003_ %>%
-  mutate(
-    NGI_ID = gsub("_[^_]*$", "", File),
-    .keep = "unused",
-    .before = Number_of_input_reads
-  ) %>%
-  dplyr::select(-...11)
-
-mapping_24P003 <- mapping_24P003 %>%
-  separate(`User ID`, into = c("BEA_ID", "Sample_ID"), sep = "_(?=[^_]+$)") %>%
-  dplyr::select(NGI_ID = "NGI ID", BEA_ID, Sample_ID, Mreads, `>=Q30`) %>%
-  mutate(BEA_ID = str_replace(.$BEA_ID, "i|_i", "")) %>%
-  left_join(., mapping_24P003_) %>%
-  mutate(
-    Sample_ID = ifelse(.$BEA_ID == "BEA24P003_28", "FF06580610", .$Sample_ID)
-  ) %>%
-  left_join(
-    .,
-    select(
-      smpl_barcodes,
-      Sample_ID = "ORANGE (biopsi, mikrobiom, 800µl DNA/RNA shield)",
-      DS_ID
-    ),
-    by = "Sample_ID"
-  ) %>%
-  left_join(
-    .,
-    select(smpl_IDs, svamp_ID, DS_ID = "patient_ID"),
-    by = "DS_ID"
-  ) %>%
-  select(-Number_mapped_in_genes) %>%
+```{r get-ID-key}
+id <- imap(
+  mapping_id,
+  # ~ if (.y == "BEA26P064") {
+  #   mutate(.x, `BEA ID` = gsub("^[^_]*_[^_]*_", "", `User ID`), ID = `User ID`)
+  # } else {
+  ~ mutate(
+    .x,
+    ID = gsub("^[^_]*_[^_]*_", "", `User ID`),
+    `BEA ID` = sub("^(.*)_(\\d+)i?_.*$", "\\1_\\2", `User ID`),
+    .keep = "unused"
+  )
+  #}
+) %>%
+  map(., ~ select(.x, `NGI ID`, `BEA ID`, ID)) %>%
+  bind_rows() %>%
+  # add svamp_ID:
+  left_join(., select(smpl_IDs, `BEA ID`, svamp_ID, ), by = "BEA ID") %>%
+  # Make NA samples unique:
   mutate(
     svamp_ID = ifelse(
-      .$BEA_ID %in% batch,
-      paste0(.$svamp_ID, "_run2"),
-      .$svamp_ID
-    )
-  ) %>%
-  left_join(
-    .,
-    select(meta_trx, Sample_ID = sample_ID, RIN),
-    by = "Sample_ID"
-  ) %>%
-  relocate(DS_ID, svamp_ID, RIN, .after = "Sample_ID")
-
-
-mapping_23P074 <- mapping_23P074 %>%
-  as_tibble() %>%
-  dplyr::select(
-    NGI_ID,
-    BEA_ID,
-    Sample_ID = "vial",
-    any_of(colnames(mapping_24P003[4:14])),
-    Reads_in_genes
-  ) %>%
-  left_join(
-    .,
-    select(
-      smpl_barcodes,
-      Sample_ID = "ORANGE (biopsi, mikrobiom, 800µl DNA/RNA shield)",
-      DS_ID
-    ),
-    by = "Sample_ID"
-  ) %>%
-  left_join(
-    .,
-    select(smpl_IDs, svamp_ID, DS_ID = "patient_ID"),
-    by = "DS_ID"
-  ) %>%
-  left_join(
-    .,
-    select(meta_trx, Sample_ID = sample_ID, RIN),
-    by = "Sample_ID"
-  ) %>%
-  relocate(DS_ID, svamp_ID, RIN, .after = "Sample_ID")
-
-write_csv(mapping_23P074, "Tidy_data/Transcriptomics/Mapping_23P074.csv")
-write_csv(mapping_24P003, "Tidy_data/Transcriptomics/Mapping_24P003.csv")
-
-# Merge mapping files for run 1 (23P074) and run 2 (24P003)
-mapping <- bind_rows(mapping_24P003, mapping_23P074) %>%
-  mutate(
-    svamp_ID = if_else(
       is.na(svamp_ID),
       paste0("NA_", cumsum(is.na(svamp_ID))),
       svamp_ID
     )
   )
-mapping <- mapping %>%
-  mutate(svamp_ID = str_replace(svamp_ID, "S75_Bl", "S75_BL")) %>%
-  mutate(svamp_ID = str_replace(svamp_ID, "S69_1M", "S69_3M")) %>%
-  arrange(svamp_ID) #%>%
-#dplyr::summarise(n = dplyr::n(), .by = c("Sample_ID",  "DS_ID", "svamp_ID")) |>
-#dplyr::filter(n > 1L)
-
-setdiff(meta_trx$sample_ID, mapping$Sample_ID)
-
-write_csv(mapping, "../Tidy_data/Transcriptomics/Mapping_all_trx_samples.csv")
 ```
 
-### overviw of transcriptomics data
-```{r}
-#############
-# LOAD DATA #
-#############
-meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp.xlsx"
-meta_data <- read_xlsx(meta_path, sheet = "Metadata", skip = 1)
+```{r add-batch-info}
+# add batch run:
+Batch_2 <- c(
+  "P31315_1056",
+  "P31315_1053",
+  "P31315_1057",
+  "P31315_1054",
+  "P31315_1055"
+)
+Batch_3 <- c(
+  "P41356_2017",
+  "P41356_2018",
+  "P41356_2019",
+  "P41356_2020",
+  "P41356_2021",
+  "P41356_2022",
+  "P41356_2023",
+  "P41356_2024"
+)
 
-s <- smpl_IDs %>%
-  select(svamp_ID, DS_ID = patient_ID) %>%
-  mutate(ID_ = str_extract(DS_ID, "K\\d+|^\\d+")) %>%
-  mutate(ID = str_extract(svamp_ID, "S\\d\\d")) %>%
-  left_join(
-    .,
-    select(
-      mapping,
-      svamp_ID,
-      BEA_code_transcriptomics_tissue = NGI_ID,
-      barcode_transcriptomics_tissue = Sample_ID
-    ),
-    by = "svamp_ID"
-  )
-
-# meta data
-meta_data <- meta_data %>%
-  select(ID, Treatment, groups) %>%
-  left_join(., unique(select(s, ID = ID_, svamp_ID = ID)))
-
-# Transcriptomics samples wide overviw
-m <- mapping %>%
-  select(Sample_ID, svamp_ID_ = svamp_ID, DS_ID) %>%
-  mutate(ID_ = str_extract(DS_ID, "K\\d+|^\\d+")) %>%
-  left_join(
-    .,
-    select(meta_data, svamp_ID, ID_ = "ID", Treatment, groups),
-    by = "ID_"
+id <- id %>%
+  arrange(svamp_ID) %>%
+  mutate(
+    svamp_ID = ifelse(
+      `NGI ID` %in% Batch_2,
+      paste0(.$svamp_ID, "_run2"),
+      .$svamp_ID
+    )
   ) %>%
-  mutate(timepoint = str_match(svamp_ID_, "(?:^|_)(BL|3M)(?:_|$)")[, 2]) %>%
-  mutate(timepoint = ifelse(is.na(.$timepoint), "BL", .$timepoint)) %>%
-
-  select(-Sample_ID, -DS_ID) %>%
-  # dplyr::summarise(n = dplyr::n(), .by = c(ID)) |>
-  # dplyr::filter(n > 1L)
-  pivot_wider(
-    names_from = "timepoint",
-    values_from = "svamp_ID_",
-    values_fill = NA,
-    values_fn = list(svamp_ID_ = ~ paste(unique(.), collapse = ", "))
+  mutate(
+    svamp_ID = ifelse(
+      `NGI ID` %in% Batch_3,
+      paste0(.$svamp_ID, "_run3"),
+      .$svamp_ID
+    )
   )
 ```
 
-### get symbols for ensembel ids
-```{r gene-annotation}
+```{r combine-all-mapping-info}
+id <- id %>%
+  left_join(., select(smpl_IDs, `BEA ID`, RIN), by = "BEA ID") %>%
+  left_join(., select(mapping, everything()), by = "NGI ID")
+```
+
+### Step 2. Merge counts tabels and replace NGI id with svamp ids
+```{r combine-and-save-trx-data}
+
+# Define common genes across all studies
+# to dubble check that they are the same
+common_genes <- reduce(
+  map(counts, pull, ensembl),
+  intersect
+)
+length(common_genes)
+map(counts, ~ dim(.x))
+
+# Merge datasets on ensembl id
+trx_merged <- reduce(
+  counts,
+  full_join,
+  by = c("ensembl", "Chr", "Start", "End", "Strand", "Length")
+)
+
+################
+# Get Svamp_ID #
+################
+mapping <- read_csv("../Tidy_data/Transcriptomics/Mapping_all_trx_samples.csv")
+anno_org_mod <- read_csv("data/gene_annotation.csv")
+
+ID_list <- set_names(id$svamp_ID, id$`NGI ID`)
+
+trx_merged_ <- trx_merged %>%
+  # remove adapter id or something:
+  rename_with(~ str_extract(.x, "^[^_]+_[^_]+"), .cols = starts_with("P")) %>%
+  rename_with(~ ID_list[.x], .cols = starts_with("P"))
+
+colnames(trx_merged_)
+```
+
+### Step 3. get symbols for ensembel ids
+
+This workflow is more or less a tidyverse version of what Tassos does:
+1. Get Ensembl annotation
+2. Get org.Hs.eg.db annotation. 
+3. Collapse duplicates.
+4. Use org.Hs.eg.db as primary.
+5. Fill missing values from Ensembl.
+
+Additionaly Tassos explicitly checks agreement between the two databases before merging, by creating a column that says true false.
+
+This workflow was designed to maximize annotation coverage by combining two databases
+I have decided to replace this workflow with a cleaner, easier to reproduce, workflow that is based on Olgas (NBIS) code. It avoids potential disagreements between Ensembl and org.Hs.eg.db and is more reproducible. 
+```{r gene-annotation-Tassos}
+#| eval: false
+#| code-fold: true
 #############
 # LOAD DATA #
 #############
@@ -370,54 +369,186 @@ write_csv(counts_24P003, "../Tidy_data/Transcriptomics/Counts_24P003.csv")
 # write_csv(anno_org_mod, "data/gene_annotation.csv")
 ```
 
-### Combine counts tabels and replace NGI id with svamp ids
-```{r combine-and-save-trx-data}
-#############
-# LOAD DATA #
-#############
-mapping <- read_csv("../Tidy_data/Transcriptomics/Mapping_all_trx_samples.csv")
-counts_23P074 <- read_csv("../Tidy_data/Transcriptomics/Counts_23P074.csv")
-counts_24P003 <- read_csv("../Tidy_data/Transcriptomics/Counts_24P003.csv")
-anno_org_mod <- read_csv("data/gene_annotation.csv")
+I wanted to use version 113 of ensemble as its the same as BEA used as reference, however I cannot get the connection with the ensembl server to work except for when I leave the version flagg empty. This means that I will be using the latest version 116.
+```{r gene-annotation-new}
+############################################################
+# 1. Connect to a specific Ensembl release (recommended)   #
+############################################################
 
-ID_list <- set_names(mapping$svamp_ID, mapping$NGI_ID)
+# Using a fixed release makes the annotation reproducible.
+# Replace the release number if you want to match the
+# Ensembl version used during read alignment/counting.
 
-counts_23P074 <- counts_23P074 %>%
-  rename_with(~ ID_list[.x], .cols = starts_with("P"))
+# List latest versions:
+latest <- biomaRt::listEnsemblArchives()[1:4, ]
+latest
 
-counts_24P003 <- counts_24P003 %>%
-  rename_with(~ ID_list[.x], .cols = starts_with("P"))
+annotation_metadata <- list(
+  date_accessed = Sys.Date(),
+  biomart_version = as.character(packageVersion("biomaRt")),
+  host = latest[2, 4]
+)
 
-# combine count tables
-# check if anny ensembl id's differ
-setdiff(counts_23P074$ensembl, counts_24P003$ensembl)
-setdiff(counts_24P003$ensembl, counts_23P074$ensembl)
+annotation_metadata
 
-# 1. Select metadata columns from counts
-counts_metadata <- counts_23P074 %>%
-  select(ensembl, Chr, Start, End, Strand, Length)
+# select the newest ensemble version:
+mart <- useEnsembl(
+  biomart = "genes",
+  dataset = "hsapiens_gene_ensembl",
+  version = 116
+)
 
-# 2. Select count columns based on sample sheet
-count_data <- bind_cols(counts_23P074, counts_24P003) %>%
-  select(all_of(mapping$svamp_ID)) %>%
-  # colnames(.)
-  select(sort(colnames(.)))
 
-# 3. Combine metadata and count values
-counts_comb <- bind_cols(counts_metadata, count_data)
+############################################################
+# 2. Create a table containing the Ensembl IDs to annotate #
+############################################################
 
-# 4. Join with annotations (left join on ensembl)
-counts_comb <- counts_comb %>%
-  left_join(anno_org_mod, by = "ensembl") %>%
-  relocate(symbol, entrez, .after = "Length")
+# Assuming your data frame contains a column called 'ensembl'
 
+df_genes <- tibble(
+  ensembl_gene_id = unique(c(
+    trx_merged_$ensembl
+  ))
+)
+
+###########################################################
+# 3. Retrieve annotation only for genes in your dataset   #
+###########################################################
+
+# hgnc_symbol      = official HGNC gene symbol
+# external_gene_name = often identical to symbol but not always
+# gene_biotype     = protein_coding, lncRNA, etc.
+# entrezgene_id    = optional additional identifier
+
+anno <- getBM(
+  attributes = c(
+    "ensembl_gene_id",
+    "hgnc_symbol",
+    "gene_biotype",
+    "entrezgene_id"
+  ),
+  filters = "ensembl_gene_id",
+  values = df_genes$ensembl_gene_id,
+  mart = mart
+)
+
+##########################################
+# 4. Check whether duplicate mappings    #
+#    are present                         #
+##########################################
+
+dup_genes <- anno %>%
+  group_by(ensembl_gene_id) %>%
+  summarise(
+    n_rows = n(),
+    hgnc_symbols = paste((unique(na.omit(hgnc_symbol))), collapse = ","),
+    gene_biotype = paste((unique(na.omit(gene_biotype))), collapse = ","),
+    .groups = "drop"
+  ) %>%
+  filter(n_rows > 1) %>%
+  mutate(
+    n_symbol = if_else(
+      hgnc_symbols == "",
+      0L,
+      str_count(hgnc_symbols, ",") + 1L
+    )
+  ) %>%
+  arrange(desc(n_symbol))
+
+cat("Number of Ensembl IDs with >1 annotation:", nrow(dup_genes), "\n")
+
+# Inspect duplicate cases if any exist
+dup_genes
+
+###########################################################
+# 5. Resolve duplicate rows (usually very few if any)     #
+###########################################################
+
+# For most RNA-seq datasets an Ensembl gene ID corresponds
+# to one HGNC symbol.
+#
+# Here we keep one row per Ensembl gene while preserving
+# all available symbols if multiple exist.
+
+anno_clean <- anno %>%
+  group_by(ensembl_gene_id) %>%
+  summarise(
+    symbol = paste(
+      unique(na.omit(hgnc_symbol)),
+      collapse = ","
+    ),
+    # gene_name = paste(
+    #   unique(na.omit(external_gene_name)),
+    #   collapse = ","
+    # ),
+    gene_biotype = dplyr::first(gene_biotype),
+    entrezgene_id = paste(
+      unique(na.omit(entrezgene_id)),
+      collapse = ","
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    # gene_name = na_if(gene_name, ""),
+    symbol = na_if(symbol, "")
+  )
+
+###########################################################
+# 7. Join annotation back to the transcriptomics table    #
+###########################################################
+
+trx_annotated <- list(trx_merged_) %>%
+  map(
+    ~ .x %>%
+      left_join(
+        anno_clean,
+        by = c("ensembl" = "ensembl_gene_id")
+      ) %>%
+      relocate(
+        symbol,
+        gene_biotype,
+        entrez = entrezgene_id,
+        .after = ensembl
+      )
+  )
+
+###########################################################
+# 8. Quick quality-control summaries                      #
+###########################################################
+
+map_dfr(
+  trx_annotated,
+  ~ tibble(
+    # How many genes?
+    n_genes = nrow(.x),
+    # How many genes have a symbol?
+    n_symbol = sum(!is.na(.x$symbol)),
+    # How many genes have no symbol?
+    n_no_symbol = sum(is.na(.x$symbol)),
+    pct_symbol = mean(!is.na(.x$symbol)) * 100
+  ),
+  .id = "dataset"
+)
+
+# Which biotypes are present?
+sort(table(trx_annotated[[1]]$gene_biotype), decreasing = T)
+```
+
+
+```{r save-count-table}
 # save count tables with svamp_ID
 write_csv(
-  counts_comb,
+  trx_merged_,
   "../Tidy_data/Transcriptomics/Counts_all_trx_samples.csv"
 )
 # counts_comb <- read_csv("Tidy_data/Counts_trx.csv")
+
+write_csv(
+  id,
+  "../Tidy_data/Transcriptomics/Mapping_all_trx_samples.csv"
+)
 ```
+
 
 ## Format Metagenome data
 
@@ -504,7 +635,6 @@ smpl_IDs <- read_xlsx(
 #   )
 # ) %>%
 # left_join(., select(gr_data, ID = "svamp_ID", group), by = c("ID"))
-
 ```
 
 ### Vagswab data
@@ -700,8 +830,7 @@ CST_data <- read_csv(CST) %>%
   select(svamp_ID = sampleID, CST, subCST) %>%
   bind_rows(., ex)
 
-r <- read_stat %>% left_join(., CST_data, by = "svamp_ID") %>%
-  arrange(svamp_ID)
+r <- read_stat %>% left_join(., CST_data, by = "svamp_ID") %>% arrange(svamp_ID)
 
 # save file
 write_csv(
@@ -710,7 +839,6 @@ write_csv(
 )
 # read_stat <- read_csv("../Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv")
 # read_stat <- read_stat %>% select(-CST, -subCST)
-
 ```
 
 S10 and S15 was exluded due to poor quality
@@ -891,7 +1019,6 @@ write_csv(
 )
 
 # tissue_counts <- read_csv("../Tidy_data/Metagenomics/Metageonome_all_tissue_metaphlan.csv")
-
 ```
 
 #### Format count info table
@@ -1033,8 +1160,6 @@ vagswab_data <- full_join(
   select(`# Pathway`, contains("ex"), contains("seq"), sort(colnames(.)))
 
 colnames(vagswab_data)
-
-
 ```
 
 ```{r}
