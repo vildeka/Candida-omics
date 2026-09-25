@@ -110,8 +110,6 @@ BEA24P003_28 is FF06580610 in meta
 based on the "Registrering Provrör ID CHLORHEX.xlxs" files it should be FF06580610
 I have now updated F.Fagerstrom_24_07_sample_info.txt with the correct information
 
-This is recitified bellow
-
 ```{r load-trx-data}
 ##################
 # LOAD LIBRARIES #
@@ -144,12 +142,10 @@ counts <- map(
 ######################
 # Load Mapping files #
 ######################
-# NB! I had to add a 0 to the front of some of the patient_ID with numbers less than 10 (02, 03, 07, 09)
-# to the svamp_ID_list.xlsx from Margaux
-# smpl_IDs <- read_xlsx(paste0(input_dir, "svamp_ID_list.xlsx"))
 smpl_IDs <- read_xlsx(
   "../Tidy_data/Transcriptomics/BEA_Extraction_RNA_DNA_QC.xlsx",
-  skip = 1
+  skip = 1,
+  na = "NA"
 )
 
 mapping_id <- c(
@@ -164,9 +160,6 @@ mapping <- c("BEA23P074run2", "BEA24P003", "BEA26P064") %>%
   map(., ~ read_tsv(paste0(input_dir, .x, "_mapping.txt"))) %>%
   bind_rows() %>%
   mutate(`NGI ID` = str_extract(File, "^[^_]+_[^_]+"), .after = "File")
-
-# m <- readRDS(paste0(input_dir, "smpl_23P074.rds")) %>%
-#   select(NGI_ID, User_ID)
 ```
 
 ### Step 1. Combine all transcriptomics related information
@@ -244,8 +237,7 @@ id <- id %>%
 ```
 
 ### Step 2. Merge counts tabels and replace NGI id with svamp ids
-```{r combine-and-save-trx-data}
-
+```{r merge-count-tables}
 # Define common genes across all studies
 # to dubble check that they are the same
 common_genes <- reduce(
@@ -265,9 +257,6 @@ trx_merged <- reduce(
 ################
 # Get Svamp_ID #
 ################
-mapping <- read_csv("../Tidy_data/Transcriptomics/Mapping_all_trx_samples.csv")
-anno_org_mod <- read_csv("data/gene_annotation.csv")
-
 ID_list <- set_names(id$svamp_ID, id$`NGI ID`)
 
 trx_merged_ <- trx_merged %>%
@@ -290,7 +279,8 @@ This workflow is more or less a tidyverse version of what Tassos does:
 Additionaly Tassos explicitly checks agreement between the two databases before merging, by creating a column that says true false.
 
 This workflow was designed to maximize annotation coverage by combining two databases
-I have decided to replace this workflow with a cleaner, easier to reproduce, workflow that is based on Olgas (NBIS) code. It avoids potential disagreements between Ensembl and org.Hs.eg.db and is more reproducible. 
+I have decided to replace this workflow with a cleaner, easier to reproduce, workflow that is based on Olgas (NBIS) code.  
+It avoids potential disagreements between Ensembl and org.Hs.eg.db and is more reproducible. 
 ```{r gene-annotation-Tassos}
 #| eval: false
 #| code-fold: true
