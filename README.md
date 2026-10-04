@@ -2,13 +2,15 @@
 
 *Work in Progress*
 
-This repository contains analysis pipelines and resources for **multi-omic integration** of data from our study on **recurrent vulvovaginal candidiasis (RVVC)** — commonly known as recurrent vaginal yeast infection.  
+![](./bin/Scematic_figure.png)
+
+This repository contains analysis pipelines and resources for multi-omic integration of data from our study on recurrent vulvovaginal candidiasis (RVVC), commonly known as recurrent vaginal yeast infection.  
 
 ---
 
 ## Background
 
-Recurrent vulvovaginal candidiasis (RVVC) affects **5%–10% of women**, significantly impacting reproductive health and quality of life.  
+Recurrent vulvovaginal candidiasis (RVVC) affects 5%–10% of women, significantly impacting reproductive health and quality of life.  
 
 An introduction to the cohort and our investigation of bulk transcriptomics data can be found here:  
  [DOI: 10.1111/aji.70040](https://doi.org/10.1111/aji.70040)
@@ -57,7 +59,7 @@ This repository will bring together multiple omics layers generated from the sam
 3. [03_Figure](https://vildeka.github.io/Candida-omics/Figure3)
 
 ### Supplementary Figures
-4. [S01_Figure](https://vildeka.github.io/Candida-omics/FigureS1)
+1. [S01_Figure](https://vildeka.github.io/Candida-omics/FigureS1)
 
 *(More analysis pipelines and results will be added as the project progresses.)*
 
