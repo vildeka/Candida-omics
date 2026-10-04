@@ -1,4 +1,4 @@
-# Cross-Modal Multi-Omics Integration Uncovers Coordinated Host and Vaginal Environmental Pathways in Recurrent Vulvovaginal Candidiasis
+## Cross-Modal Multi-Omics Integration Uncovers Coordinated Host and Vaginal Environmental Pathways in Recurrent Vulvovaginal Candidiasis
 
 *Work in Progress*
 
@@ -10,7 +10,7 @@ This repository contains analysis pipelines and resources for multi-omic integra
 
 ## Background
 
-Recurrent vulvovaginal candidiasis (RVVC) affects 5%–10% of women, significantly impacting reproductive health and quality of life.  
+Recurrent vulvovaginal candidiasis (RVVC) affects 5%–10% of women, significantly impacting reproductive health and quality of life, yet the mechanisms underlying disease recurrence remain poorly understood. Integrative multi-omics approaches can uncover coordinated host and vaginal environmental processes that contribute to disease pathogenesis and are not apparent from single-omics analyses alone. Here we integrate transcriptomics (representing the host) with metagenomics and metabolomics datasets (representing vaginal environmental factors) from our Swedish cohort of women with RVVC to explore and characterize RVVC signatures across the vaginal epithelium and luminal compartment.
 
 An introduction to the cohort and our investigation of bulk transcriptomics data can be found here:  
  [DOI: 10.1111/aji.70040](https://doi.org/10.1111/aji.70040)
