@@ -1,4 +1,4 @@
-# Candida-omics
+# Cross-Modal Multi-Omics Integration Uncovers Coordinated Host and Vaginal Environmental Pathways in Recurrent Vulvovaginal Candidiasis
 
 *Work in Progress*
 
