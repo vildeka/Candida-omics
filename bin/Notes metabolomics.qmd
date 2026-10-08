@@ -1,0 +1,201 @@
+---
+title: "Metabolomics biostatistics meeting notes"
+date: today
+date-format: "D MMM YYYY"
+format:
+  html: 
+    theme: minty
+    toc: true
+    toc-depth: 2
+    highlight-style: github
+    code-tools:
+      source: true
+      toggle: true
+      caption: Code
+---
+
+# Metabolomics biostatistics meeting notes
+
+## 1. Data normalization and scaling
+
+**Question:**  
+We see in the report that each metabolite has been scaled to 0–100 based on its maximum peak. Was any other normalization or scaling applied? If not, is there a standard approach you recommend?
+
+**Notes from meeting:**
+
+- No other normalization has been applied. The data have only been scaled **per metabolite to a 0–100 range**. This could also have been 0-1 but he uses 0-100, because its more easely interpretable for most people. 
+- The internal standards have **not** been applied for normalization.
+- The biostatistician cautioned that using internal standards for normalization can sometimes correct for one source of variation while introducing another.
+  - For example, **co-elution** can cause an internal standard to introduce a bias that was not present in the original measurement.
+  - If the signal for an internal standard is below approximately **10%**, they generally recommend not using it.
+    - **[ADDED / INFERRED]** This appears to refer to the internal standard signal being sufficiently low that it is considered unreliable for normalization.
+- The measurements do not necessarily represent the entire molecule directly. Instead, the analytical method measures **specific fragments/ions of the molecules**.
+  - This is one of the downsides of using GC-MS compared to LC-MS. Because you have to bring the molecules into a gass state requires them to be fragmented. In LS-MS, from what I understand they stay complet.
+  - For example, a glucose measurement in plasma/serum may be based on a relatively large fragment that is not necessarily unique to, or directly proportional to, the absolute concentration of glucose.
+  - Different fragments of the same metabolite can give different absolute values.
+  - However, the **relative proportions/patterns between samples should remain comparable**, assuming the same fragment is used throughout the dataset.
+- **Log transformation can be applied in addition to the existing scaling.**
+- Log scaling is particularly useful when:
+  - some metabolites have very high values compared with the rest of the data;
+  - the data have a strongly skewed distribution;
+  - values are close to the noise/detection region and the transformation can help make differences more apparent.
+  - However, this could also be unidiserable as you can now make what seemed like insignifcante values can now be interpeted as signals. Perhaps they are only noise. This is typical of samples where you have more of a binary signal, either wery low or very high values.  
+- **[ADDED / INFERRED]** The main statistical rationale for log transformation is to reduce right-skew and compress very large values, rather than simply to “enhance” low values.
+
+**Potential implication for our analysis:**
+
+- **[ADDED / INFERRED]** We should probably inspect the distributions of individual metabolites before deciding whether to apply a log transformation globally. A single transformation may not be optimal for every metabolite.
+
+---
+
+## 2. Interpretation of zero values
+
+**Question:**  
+Does a value of 0 in the metabolite matrix actually mean that the metabolite was not detected?
+
+**Answer:**
+
+- No, **0 should not necessarily be interpreted as “not detected.”**
+- The value is related to the **precision/resolution of the measurement**.
+- After data has been reported with a precision of **four decimal places**. It is up to us to decide if we want to apply a treshold, but this should be biologicaly justified.
+- **[ADDED / INFERRED]** This means we should be careful about treating zeros as biological absence or automatically converting them to missing values. We should clarify the exact meaning of a reported 0 in the exported dataset before applying any imputation or filtering.
+
+---
+
+## 3. QC samples
+
+**Question:**  
+Are QC samples 1–4 measurements of the same pooled material?
+
+**Answer:**
+
+- Yes. The QC samples are **aliquots from the same pooled material**.
+- After aliquoting, the remaining material is pooled, and the QC samples are injected approximately **15 minutes apart**.
+- The QC samples can be used to assess **run-order drift** and provide a kind of worst-case scenario for changes in sensitivity across the analytical run.
+- The effect of run-order drift tends to penalize compounds with **low abundance**, because these compounds can disappear into the noise.
+  - These low-abundance compounds are often already close to the noise region.
+- There can potentially be a decrease in instrument sensitivity of approximately **10% between the first and last injection**.
+- **[ADDED / INFERRED]** Therefore, the repeated QC measurements provide an opportunity to assess whether metabolite intensities change systematically with injection order and whether a run-order correction is warranted.
+
+---
+
+## 4. Run-order / drift correction
+
+**Question:**  
+Has any form of run-order or drift correction already been applied?
+
+**Answer:**
+
+- No correction has been applied to the current dataset.
+- The biostatistician prefers that the **customer/researcher decides whether correction is necessary**.
+- If a correction is applied, the rationale should be documented and explained — in the analysis presentation/PPT — including why the correction improves the data.
+- **[ADDED / INFERRED]** We should therefore first visualize the QC samples and/or metabolite intensities as a function of injection order to determine whether there is evidence of systematic drift before applying a correction.
+
+---
+
+## 5. RSD and quality filtering
+
+**Question:**  
+How was the RSD determined, and is there a standard cutoff?
+
+**Notes from meeting:**
+
+- RSD is essentially calculated as:
+
+  $$\mathrm{RSD}(\%) = \frac{\mathrm{SD}}{\mathrm{mean}} \times 100$$
+
+- An example of an injection standard mentioned was **octanoic acid**, with an RSD of approximately **12%**.
+- Our swab samples are inherently more variable because **the amount/material collected per swab is not standardized**.
+- Therefore, we may expect larger biological/technical variability between swab samples than would be expected for a standardized sample.
+- Internal standards can also create issues if present at very high concentrations, because they may affect metabolites that **elute in the same region**.
+- Thus the concntrations used for the internal standards are very low, this is so that they avoid supressing/compressing the signal from the actual samples.
+- **[ADDED / INFERRED]** There does not appear to be a single universal RSD cutoff that should automatically be applied to our dataset. The appropriate threshold should take into account the sample type, expected technical variability, metabolite abundance, and purpose of the analysis.
+
+---
+
+## 6. Scaling for multi-omics integration
+
+**Question:**  
+For the purpose of integrating the metabolomics data with other omics datasets, would you recommend keeping the metabolomics data as they are and only applying feature scaling?
+
+**Notes:**
+
+- **Log scaling can be justified** if it improves the results of the analysis.
+- The recommendation was to **perform the analysis both with and without log transformation** and compare the results to assess whether the transformation makes a meaningful difference.
+- The overall take-home message was that **there is no single mandatory preprocessing approach**. Different approaches can be appropriate as long as they are **well justified and consistently applied**.
+- **[ADDED / INFERRED]** For our analysis, this means that we could compare different preprocessing strategies (e.g., with and without log transformation) and assess whether the biological conclusions and/or statistical performance are robust to the choice of preprocessing.
+- **[ADDED / INFERRED]** Any preprocessing decisions should be clearly documented so that the rationale for the chosen approach is transparent and reproducible.
+
+---
+
+## 7. Enrichment analysis
+
+**Question:**  
+How can enrichment analysis be applied to this metabolomics dataset?
+
+**Answer:**
+
+- Most enrichment methods are **coverage-based**.
+- They primarily tell you:
+  - which metabolites have been measured;
+  - which pathways those metabolites are associated with;
+  - whether the measured metabolites provide coverage of particular metabolic pathways.
+- **[INCOMPLETE IN ORIGINAL NOTES]**
+- **[ADDED / INFERRED]** This distinction is important because pathway/enrichment analysis of metabolomics data is constrained by the metabolites that the analytical platform can actually detect. A pathway may therefore appear poorly represented simply because the assay does not measure all of its constituent metabolites.
+- **[ADDED / INFERRED]** If we have quantitative information for the metabolites, we may also consider approaches that incorporate metabolite abundance rather than only asking whether a metabolite was detected. The exact method should depend on whether we are interested in pathway coverage, differential abundance, or pathway-level changes.
+
+---
+
+## 8. OPLS / PLS-DA
+
+**Notes from meeting:**
+
+- **OPLS is useful for interpretation**, but is otherwise similar to PLS-DA.
+- OPLS essentially **reorganizes the components** so that the variation related to the outcome/class separation is distinguished from orthogonal variation.
+- Both approaches provide:
+  - **scores**, which describe the samples;
+  - **loadings**, which help identify the variables/metabolites contributing to the model.
+- **[ADDED / INFERRED]** The main advantage of OPLS for interpretation is therefore that it separates predictive variation from variation unrelated to the response, which can make the resulting plots and metabolite interpretation easier.
+
+---
+
+## 9. Visualization
+
+**Notes from meeting:**
+
+- **Volcano plots** are typical for visualizing differential metabolite abundance.
+- **Bar plots** are also commonly used to display metabolite-level results.
+- **[ADDED / INFERRED]** Depending on the research question, other useful visualizations could include:
+  - PCA score plots;
+  - heatmaps;
+  - correlation plots;
+  - pathway plots;
+  - OPLS/PLS score plots;
+  - OPLS/PLS loading plots.
+
+---
+
+## Points requiring clarification
+
+There are a few places where the notes are sufficiently incomplete that these should be confirmed with the biostatistician rather than treated as definitive:
+
+1. **Internal standard <10%**
+   - Confirm exactly what the 10% refers to.
+
+2. **Different fragments**
+   - Confirm what was meant by the statement that the values between fragments differ but the proportion remains the same.
+
+3. **Log transformation**
+   - Confirm whether log transformation was recommended before or after the 0–100 scaling, since the order of these operations matters.
+
+4. **Zeros**
+   - Confirm exactly what a reported `0` represents in the core facility's data-processing pipeline.
+
+5. **RSD cutoff**
+   - Confirm whether a specific RSD threshold was recommended for filtering metabolites.
+
+6. **Multi-omics integration**
+   - The answer is missing from the original notes, so the discussion above is **[ADDED / INFERRED]** and should not be attributed directly to the biostatistician without confirmation.
+
+7. **Enrichment analysis**
+   - The notes capture the beginning of the answer but not the specific method(s) they may have recommended.

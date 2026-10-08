@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.2.269">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>Metabolomics biostatistics meeting notes</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1.6em;
+  vertical-align: middle;
+}
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+    color: #aaaaaa;
+  }
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+code span.at { color: #7d9029; } /* Attribute */
+code span.bn { color: #40a070; } /* BaseN */
+code span.bu { color: #008000; } /* BuiltIn */
+code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+code span.ch { color: #4070a0; } /* Char */
+code span.cn { color: #880000; } /* Constant */
+code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+code span.dt { color: #902000; } /* DataType */
+code span.dv { color: #40a070; } /* DecVal */
+code span.er { color: #ff0000; font-weight: bold; } /* Error */
+code span.ex { } /* Extension */
+code span.fl { color: #40a070; } /* Float */
+code span.fu { color: #06287e; } /* Function */
+code span.im { color: #008000; font-weight: bold; } /* Import */
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+code span.op { color: #666666; } /* Operator */
+code span.ot { color: #007020; } /* Other */
+code span.pp { color: #bc7a00; } /* Preprocessor */
+code span.sc { color: #4070a0; } /* SpecialChar */
+code span.ss { color: #bb6688; } /* SpecialString */
+code span.st { color: #4070a0; } /* String */
+code span.va { color: #19177c; } /* Variable */
+code span.vs { color: #4070a0; } /* VerbatimString */
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+</style>
+
+
+<script src="Notes metabolomics_files/libs/clipboard/clipboard.min.js"></script>
+<script src="Notes metabolomics_files/libs/quarto-html/quarto.js"></script>
+<script src="Notes metabolomics_files/libs/quarto-html/popper.min.js"></script>
+<script src="Notes metabolomics_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="Notes metabolomics_files/libs/quarto-html/anchor.min.js"></script>
+<link href="Notes metabolomics_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="Notes metabolomics_files/libs/quarto-html/quarto-syntax-highlighting.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="Notes metabolomics_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="Notes metabolomics_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="Notes metabolomics_files/libs/bootstrap/bootstrap.min.css" rel="stylesheet" id="quarto-bootstrap" data-mode="light">
+
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js" type="text/javascript"></script>
+
+</head>
+
+<body>
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+<div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+  <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul class="collapse">
+  <li><a href="#metabolomics-biostatistics-meeting-notes" id="toc-metabolomics-biostatistics-meeting-notes" class="nav-link active" data-scroll-target="#metabolomics-biostatistics-meeting-notes">Metabolomics biostatistics meeting notes</a>
+  <ul class="collapse">
+  <li><a href="#data-normalization-and-scaling" id="toc-data-normalization-and-scaling" class="nav-link" data-scroll-target="#data-normalization-and-scaling">1. Data normalization and scaling</a></li>
+  <li><a href="#interpretation-of-zero-values" id="toc-interpretation-of-zero-values" class="nav-link" data-scroll-target="#interpretation-of-zero-values">2. Interpretation of zero values</a></li>
+  <li><a href="#qc-samples" id="toc-qc-samples" class="nav-link" data-scroll-target="#qc-samples">3. QC samples</a></li>
+  <li><a href="#run-order-drift-correction" id="toc-run-order-drift-correction" class="nav-link" data-scroll-target="#run-order-drift-correction">4. Run-order / drift correction</a></li>
+  <li><a href="#rsd-and-quality-filtering" id="toc-rsd-and-quality-filtering" class="nav-link" data-scroll-target="#rsd-and-quality-filtering">5. RSD and quality filtering</a></li>
+  <li><a href="#scaling-for-multi-omics-integration" id="toc-scaling-for-multi-omics-integration" class="nav-link" data-scroll-target="#scaling-for-multi-omics-integration">6. Scaling for multi-omics integration</a></li>
+  <li><a href="#enrichment-analysis" id="toc-enrichment-analysis" class="nav-link" data-scroll-target="#enrichment-analysis">7. Enrichment analysis</a></li>
+  <li><a href="#opls-pls-da" id="toc-opls-pls-da" class="nav-link" data-scroll-target="#opls-pls-da">8. OPLS / PLS-DA</a></li>
+  <li><a href="#visualization" id="toc-visualization" class="nav-link" data-scroll-target="#visualization">9. Visualization</a></li>
+  <li><a href="#points-requiring-clarification" id="toc-points-requiring-clarification" class="nav-link" data-scroll-target="#points-requiring-clarification">Points requiring clarification</a></li>
+  </ul></li>
+  </ul>
+</nav>
+</div>
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<div class="quarto-title-block"><div><h1 class="title">Metabolomics biostatistics meeting notes</h1><button type="button" class="btn code-tools-button" id="quarto-code-tools-source"><i class="bi"></i> Code</button></div></div>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+    <div>
+    <div class="quarto-title-meta-heading">Published</div>
+    <div class="quarto-title-meta-contents">
+      <p class="date">8 Oct 2026</p>
+    </div>
+  </div>
+  
+    
+  </div>
+  
+
+</header>
+
+<section id="metabolomics-biostatistics-meeting-notes" class="level1">
+<h1>Metabolomics biostatistics meeting notes</h1>
+<section id="data-normalization-and-scaling" class="level2">
+<h2 class="anchored" data-anchor-id="data-normalization-and-scaling">1. Data normalization and scaling</h2>
+<p><strong>Question:</strong><br>
+We see in the report that each metabolite has been scaled to 0–100 based on its maximum peak. Was any other normalization or scaling applied? If not, is there a standard approach you recommend?</p>
+<p><strong>Notes from meeting:</strong></p>
+<ul>
+<li>No other normalization has been applied. The data have only been scaled <strong>per metabolite to a 0–100 range</strong>. This could also have been 0-1 but he uses 0-100, because its more easely interpretable for most people.</li>
+<li>The internal standards have <strong>not</strong> been applied for normalization.</li>
+<li>The biostatistician cautioned that using internal standards for normalization can sometimes correct for one source of variation while introducing another.
+<ul>
+<li>For example, <strong>co-elution</strong> can cause an internal standard to introduce a bias that was not present in the original measurement.</li>
+<li>If the signal for an internal standard is below approximately <strong>10%</strong>, they generally recommend not using it.
+<ul>
+<li><strong>[ADDED / INFERRED]</strong> This appears to refer to the internal standard signal being sufficiently low that it is considered unreliable for normalization.</li>
+</ul></li>
+</ul></li>
+<li>The measurements do not necessarily represent the entire molecule directly. Instead, the analytical method measures <strong>specific fragments/ions of the molecules</strong>.
+<ul>
+<li>This is one of the downsides of using GC-MS compared to LC-MS. Because you have to bring the molecules into a gass state requires them to be fragmented. In LS-MS, from what I understand they stay complet.</li>
+<li>For example, a glucose measurement in plasma/serum may be based on a relatively large fragment that is not necessarily unique to, or directly proportional to, the absolute concentration of glucose.</li>
+<li>Different fragments of the same metabolite can give different absolute values.</li>
+<li>However, the <strong>relative proportions/patterns between samples should remain comparable</strong>, assuming the same fragment is used throughout the dataset.</li>
+</ul></li>
+<li><strong>Log transformation can be applied in addition to the existing scaling.</strong></li>
+<li>Log scaling is particularly useful when:
+<ul>
+<li>some metabolites have very high values compared with the rest of the data;</li>
+<li>the data have a strongly skewed distribution;</li>
+<li>values are close to the noise/detection region and the transformation can help make differences more apparent.</li>
+<li>However, this could also be unidiserable as you can now make what seemed like insignifcante values can now be interpeted as signals. Perhaps they are only noise. This is typical of samples where you have more of a binary signal, either wery low or very high values.<br>
+</li>
+</ul></li>
+<li><strong>[ADDED / INFERRED]</strong> The main statistical rationale for log transformation is to reduce right-skew and compress very large values, rather than simply to “enhance” low values.</li>
+</ul>
+<p><strong>Potential implication for our analysis:</strong></p>
+<ul>
+<li><strong>[ADDED / INFERRED]</strong> We should probably inspect the distributions of individual metabolites before deciding whether to apply a log transformation globally. A single transformation may not be optimal for every metabolite.</li>
+</ul>
+<hr>
+</section>
+<section id="interpretation-of-zero-values" class="level2">
+<h2 class="anchored" data-anchor-id="interpretation-of-zero-values">2. Interpretation of zero values</h2>
+<p><strong>Question:</strong><br>
+Does a value of 0 in the metabolite matrix actually mean that the metabolite was not detected?</p>
+<p><strong>Answer:</strong></p>
+<ul>
+<li>No, <strong>0 should not necessarily be interpreted as “not detected.”</strong></li>
+<li>The value is related to the <strong>precision/resolution of the measurement</strong>.</li>
+<li>After data has been reported with a precision of <strong>four decimal places</strong>. It is up to us to decide if we want to apply a treshold, but this should be biologicaly justified.</li>
+<li><strong>[ADDED / INFERRED]</strong> This means we should be careful about treating zeros as biological absence or automatically converting them to missing values. We should clarify the exact meaning of a reported 0 in the exported dataset before applying any imputation or filtering.</li>
+</ul>
+<hr>
+</section>
+<section id="qc-samples" class="level2">
+<h2 class="anchored" data-anchor-id="qc-samples">3. QC samples</h2>
+<p><strong>Question:</strong><br>
+Are QC samples 1–4 measurements of the same pooled material?</p>
+<p><strong>Answer:</strong></p>
+<ul>
+<li>Yes. The QC samples are <strong>aliquots from the same pooled material</strong>.</li>
+<li>After aliquoting, the remaining material is pooled, and the QC samples are injected approximately <strong>15 minutes apart</strong>.</li>
+<li>The QC samples can be used to assess <strong>run-order drift</strong> and provide a kind of worst-case scenario for changes in sensitivity across the analytical run.</li>
+<li>The effect of run-order drift tends to penalize compounds with <strong>low abundance</strong>, because these compounds can disappear into the noise.
+<ul>
+<li>These low-abundance compounds are often already close to the noise region.</li>
+</ul></li>
+<li>There can potentially be a decrease in instrument sensitivity of approximately <strong>10% between the first and last injection</strong>.</li>
+<li><strong>[ADDED / INFERRED]</strong> Therefore, the repeated QC measurements provide an opportunity to assess whether metabolite intensities change systematically with injection order and whether a run-order correction is warranted.</li>
+</ul>
+<hr>
+</section>
+<section id="run-order-drift-correction" class="level2">
+<h2 class="anchored" data-anchor-id="run-order-drift-correction">4. Run-order / drift correction</h2>
+<p><strong>Question:</strong><br>
+Has any form of run-order or drift correction already been applied?</p>
+<p><strong>Answer:</strong></p>
+<ul>
+<li>No correction has been applied to the current dataset.</li>
+<li>The biostatistician prefers that the <strong>customer/researcher decides whether correction is necessary</strong>.</li>
+<li>If a correction is applied, the rationale should be documented and explained — in the analysis presentation/PPT — including why the correction improves the data.</li>
+<li><strong>[ADDED / INFERRED]</strong> We should therefore first visualize the QC samples and/or metabolite intensities as a function of injection order to determine whether there is evidence of systematic drift before applying a correction.</li>
+</ul>
+<hr>
+</section>
+<section id="rsd-and-quality-filtering" class="level2">
+<h2 class="anchored" data-anchor-id="rsd-and-quality-filtering">5. RSD and quality filtering</h2>
+<p><strong>Question:</strong><br>
+How was the RSD determined, and is there a standard cutoff?</p>
+<p><strong>Notes from meeting:</strong></p>
+<ul>
+<li><p>RSD is essentially calculated as:</p>
+<p><span class="math display">\[\mathrm{RSD}(\%) = \frac{\mathrm{SD}}{\mathrm{mean}} \times 100\]</span></p></li>
+<li><p>An example of an injection standard mentioned was <strong>octanoic acid</strong>, with an RSD of approximately <strong>12%</strong>.</p></li>
+<li><p>Our swab samples are inherently more variable because <strong>the amount/material collected per swab is not standardized</strong>.</p></li>
+<li><p>Therefore, we may expect larger biological/technical variability between swab samples than would be expected for a standardized sample.</p></li>
+<li><p>Internal standards can also create issues if present at very high concentrations, because they may affect metabolites that <strong>elute in the same region</strong>.</p></li>
+<li><p>Thus the concntrations used for the internal standards are very low, this is so that they avoid supressing/compressing the signal from the actual samples.</p></li>
+<li><p><strong>[ADDED / INFERRED]</strong> There does not appear to be a single universal RSD cutoff that should automatically be applied to our dataset. The appropriate threshold should take into account the sample type, expected technical variability, metabolite abundance, and purpose of the analysis.</p></li>
+</ul>
+<hr>
+</section>
+<section id="scaling-for-multi-omics-integration" class="level2">
+<h2 class="anchored" data-anchor-id="scaling-for-multi-omics-integration">6. Scaling for multi-omics integration</h2>
+<p><strong>Question:</strong><br>
+For the purpose of integrating the metabolomics data with other omics datasets, would you recommend keeping the metabolomics data as they are and only applying feature scaling?</p>
+<p><strong>Notes:</strong></p>
+<ul>
+<li><strong>Log scaling can be justified</strong> if it improves the results of the analysis.</li>
+<li>The recommendation was to <strong>perform the analysis both with and without log transformation</strong> and compare the results to assess whether the transformation makes a meaningful difference.</li>
+<li>The overall take-home message was that <strong>there is no single mandatory preprocessing approach</strong>. Different approaches can be appropriate as long as they are <strong>well justified and consistently applied</strong>.</li>
+<li><strong>[ADDED / INFERRED]</strong> For our analysis, this means that we could compare different preprocessing strategies (e.g., with and without log transformation) and assess whether the biological conclusions and/or statistical performance are robust to the choice of preprocessing.</li>
+<li><strong>[ADDED / INFERRED]</strong> Any preprocessing decisions should be clearly documented so that the rationale for the chosen approach is transparent and reproducible.</li>
+</ul>
+<hr>
+</section>
+<section id="enrichment-analysis" class="level2">
+<h2 class="anchored" data-anchor-id="enrichment-analysis">7. Enrichment analysis</h2>
+<p><strong>Question:</strong><br>
+How can enrichment analysis be applied to this metabolomics dataset?</p>
+<p><strong>Answer:</strong></p>
+<ul>
+<li>Most enrichment methods are <strong>coverage-based</strong>.</li>
+<li>They primarily tell you:
+<ul>
+<li>which metabolites have been measured;</li>
+<li>which pathways those metabolites are associated with;</li>
+<li>whether the measured metabolites provide coverage of particular metabolic pathways.</li>
+</ul></li>
+<li><strong>[INCOMPLETE IN ORIGINAL NOTES]</strong></li>
+<li><strong>[ADDED / INFERRED]</strong> This distinction is important because pathway/enrichment analysis of metabolomics data is constrained by the metabolites that the analytical platform can actually detect. A pathway may therefore appear poorly represented simply because the assay does not measure all of its constituent metabolites.</li>
+<li><strong>[ADDED / INFERRED]</strong> If we have quantitative information for the metabolites, we may also consider approaches that incorporate metabolite abundance rather than only asking whether a metabolite was detected. The exact method should depend on whether we are interested in pathway coverage, differential abundance, or pathway-level changes.</li>
+</ul>
+<hr>
+</section>
+<section id="opls-pls-da" class="level2">
+<h2 class="anchored" data-anchor-id="opls-pls-da">8. OPLS / PLS-DA</h2>
+<p><strong>Notes from meeting:</strong></p>
+<ul>
+<li><strong>OPLS is useful for interpretation</strong>, but is otherwise similar to PLS-DA.</li>
+<li>OPLS essentially <strong>reorganizes the components</strong> so that the variation related to the outcome/class separation is distinguished from orthogonal variation.</li>
+<li>Both approaches provide:
+<ul>
+<li><strong>scores</strong>, which describe the samples;</li>
+<li><strong>loadings</strong>, which help identify the variables/metabolites contributing to the model.</li>
+</ul></li>
+<li><strong>[ADDED / INFERRED]</strong> The main advantage of OPLS for interpretation is therefore that it separates predictive variation from variation unrelated to the response, which can make the resulting plots and metabolite interpretation easier.</li>
+</ul>
+<hr>
+</section>
+<section id="visualization" class="level2">
+<h2 class="anchored" data-anchor-id="visualization">9. Visualization</h2>
+<p><strong>Notes from meeting:</strong></p>
+<ul>
+<li><strong>Volcano plots</strong> are typical for visualizing differential metabolite abundance.</li>
+<li><strong>Bar plots</strong> are also commonly used to display metabolite-level results.</li>
+<li><strong>[ADDED / INFERRED]</strong> Depending on the research question, other useful visualizations could include:
+<ul>
+<li>PCA score plots;</li>
+<li>heatmaps;</li>
+<li>correlation plots;</li>
+<li>pathway plots;</li>
+<li>OPLS/PLS score plots;</li>
+<li>OPLS/PLS loading plots.</li>
+</ul></li>
+</ul>
+<hr>
+</section>
+<section id="points-requiring-clarification" class="level2">
+<h2 class="anchored" data-anchor-id="points-requiring-clarification">Points requiring clarification</h2>
+<p>There are a few places where the notes are sufficiently incomplete that these should be confirmed with the biostatistician rather than treated as definitive:</p>
+<ol type="1">
+<li><strong>Internal standard &lt;10%</strong>
+<ul>
+<li>Confirm exactly what the 10% refers to.</li>
+</ul></li>
+<li><strong>Different fragments</strong>
+<ul>
+<li>Confirm what was meant by the statement that the values between fragments differ but the proportion remains the same.</li>
+</ul></li>
+<li><strong>Log transformation</strong>
+<ul>
+<li>Confirm whether log transformation was recommended before or after the 0–100 scaling, since the order of these operations matters.</li>
+</ul></li>
+<li><strong>Zeros</strong>
+<ul>
+<li>Confirm exactly what a reported <code>0</code> represents in the core facility’s data-processing pipeline.</li>
+</ul></li>
+<li><strong>RSD cutoff</strong>
+<ul>
+<li>Confirm whether a specific RSD threshold was recommended for filtering metabolites.</li>
+</ul></li>
+<li><strong>Multi-omics integration</strong>
+<ul>
+<li>The answer is missing from the original notes, so the discussion above is <strong>[ADDED / INFERRED]</strong> and should not be attributed directly to the biostatistician without confirmation.</li>
+</ul></li>
+<li><strong>Enrichment analysis</strong>
+<ul>
+<li>The notes capture the beginning of the answer but not the specific method(s) they may have recommended.</li>
+</ul></li>
+</ol>
+<!-- -->
+
+</section>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const clipboard = new window.ClipboardJS('.code-copy-button', {
+    target: function(trigger) {
+      return trigger.previousElementSibling;
+    }
+  });
+  clipboard.on('success', function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  });
+  const viewSource = window.document.getElementById('quarto-view-source') ||
+                     window.document.getElementById('quarto-code-tools-source');
+  if (viewSource) {
+    const sourceUrl = viewSource.getAttribute("data-quarto-source-url");
+    viewSource.addEventListener("click", function(e) {
+      if (sourceUrl) {
+        // rstudio viewer pane
+        if (/\bcapabilities=\b/.test(window.location)) {
+          window.open(sourceUrl);
+        } else {
+          window.location.href = sourceUrl;
+        }
+      } else {
+        const modal = new bootstrap.Modal(document.getElementById('quarto-embedded-source-code-modal'));
+        modal.show();
+      }
+      return false;
+    });
+  }
+  function toggleCodeHandler(show) {
+    return function(e) {
+      const detailsSrc = window.document.querySelectorAll(".cell > details > .sourceCode");
+      for (let i=0; i<detailsSrc.length; i++) {
+        const details = detailsSrc[i].parentElement;
+        if (show) {
+          details.open = true;
+        } else {
+          details.removeAttribute("open");
+        }
+      }
+      const cellCodeDivs = window.document.querySelectorAll(".cell > .sourceCode");
+      const fromCls = show ? "hidden" : "unhidden";
+      const toCls = show ? "unhidden" : "hidden";
+      for (let i=0; i<cellCodeDivs.length; i++) {
+        const codeDiv = cellCodeDivs[i];
+        if (codeDiv.classList.contains(fromCls)) {
+          codeDiv.classList.remove(fromCls);
+          codeDiv.classList.add(toCls);
+        } 
+      }
+      return false;
+    }
+  }
+  const hideAllCode = window.document.getElementById("quarto-hide-all-code");
+  if (hideAllCode) {
+    hideAllCode.addEventListener("click", toggleCodeHandler(false));
+  }
+  const showAllCode = window.document.getElementById("quarto-show-all-code");
+  if (showAllCode) {
+    showAllCode.addEventListener("click", toggleCodeHandler(true));
+  }
+  function tippyHover(el, contentFn) {
+    const config = {
+      allowHTML: true,
+      content: contentFn,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start'
+    };
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      return note.innerHTML;
+    });
+  }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script><div class="modal fade" id="quarto-embedded-source-code-modal" tabindex="-1" aria-labelledby="quarto-embedded-source-code-modal-label" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="quarto-embedded-source-code-modal-label">Source Code</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="">
+<div class="sourceCode" id="cb1" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="an">title:</span><span class="co"> "Metabolomics biostatistics meeting notes"</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="an">date:</span><span class="co"> today</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="an">date-format:</span><span class="co"> "D MMM YYYY"</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="an">format:</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="co">  html: </span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="co">    theme: minty</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="co">    toc: true</span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="co">    toc-depth: 2</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="co">    highlight-style: github</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="co">    code-tools:</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a><span class="co">      source: true</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="co">      toggle: true</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a><span class="co">      caption: Code</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="co">---</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a><span class="fu"># Metabolomics biostatistics meeting notes</span></span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a><span class="fu">## 1. Data normalization and scaling</span></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>**Question:**  </span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>We see in the report that each metabolite has been scaled to 0–100 based on its maximum peak. Was any other normalization or scaling applied? If not, is there a standard approach you recommend?</span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>**Notes from meeting:**</span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>No other normalization has been applied. The data have only been scaled **per metabolite to a 0–100 range**. This could also have been 0-1 but he uses 0-100, because its more easely interpretable for most people. </span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The internal standards have **not** been applied for normalization.</span>
+<span id="cb1-28"><a href="#cb1-28" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The biostatistician cautioned that using internal standards for normalization can sometimes correct for one source of variation while introducing another.</span>
+<span id="cb1-29"><a href="#cb1-29" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>For example, **co-elution** can cause an internal standard to introduce a bias that was not present in the original measurement.</span>
+<span id="cb1-30"><a href="#cb1-30" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>If the signal for an internal standard is below approximately **10%**, they generally recommend not using it.</span>
+<span id="cb1-31"><a href="#cb1-31" aria-hidden="true" tabindex="-1"></a><span class="ss">    - </span>**[ADDED / INFERRED]** This appears to refer to the internal standard signal being sufficiently low that it is considered unreliable for normalization.</span>
+<span id="cb1-32"><a href="#cb1-32" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The measurements do not necessarily represent the entire molecule directly. Instead, the analytical method measures **specific fragments/ions of the molecules**.</span>
+<span id="cb1-33"><a href="#cb1-33" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>This is one of the downsides of using GC-MS compared to LC-MS. Because you have to bring the molecules into a gass state requires them to be fragmented. In LS-MS, from what I understand they stay complet.</span>
+<span id="cb1-34"><a href="#cb1-34" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>For example, a glucose measurement in plasma/serum may be based on a relatively large fragment that is not necessarily unique to, or directly proportional to, the absolute concentration of glucose.</span>
+<span id="cb1-35"><a href="#cb1-35" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>Different fragments of the same metabolite can give different absolute values.</span>
+<span id="cb1-36"><a href="#cb1-36" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>However, the **relative proportions/patterns between samples should remain comparable**, assuming the same fragment is used throughout the dataset.</span>
+<span id="cb1-37"><a href="#cb1-37" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Log transformation can be applied in addition to the existing scaling.**</span>
+<span id="cb1-38"><a href="#cb1-38" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Log scaling is particularly useful when:</span>
+<span id="cb1-39"><a href="#cb1-39" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>some metabolites have very high values compared with the rest of the data;</span>
+<span id="cb1-40"><a href="#cb1-40" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>the data have a strongly skewed distribution;</span>
+<span id="cb1-41"><a href="#cb1-41" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>values are close to the noise/detection region and the transformation can help make differences more apparent.</span>
+<span id="cb1-42"><a href="#cb1-42" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>However, this could also be unidiserable as you can now make what seemed like insignifcante values can now be interpeted as signals. Perhaps they are only noise. This is typical of samples where you have more of a binary signal, either wery low or very high values.  </span>
+<span id="cb1-43"><a href="#cb1-43" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** The main statistical rationale for log transformation is to reduce right-skew and compress very large values, rather than simply to “enhance” low values.</span>
+<span id="cb1-44"><a href="#cb1-44" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-45"><a href="#cb1-45" aria-hidden="true" tabindex="-1"></a>**Potential implication for our analysis:**</span>
+<span id="cb1-46"><a href="#cb1-46" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-47"><a href="#cb1-47" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** We should probably inspect the distributions of individual metabolites before deciding whether to apply a log transformation globally. A single transformation may not be optimal for every metabolite.</span>
+<span id="cb1-48"><a href="#cb1-48" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-49"><a href="#cb1-49" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-50"><a href="#cb1-50" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-51"><a href="#cb1-51" aria-hidden="true" tabindex="-1"></a><span class="fu">## 2. Interpretation of zero values</span></span>
+<span id="cb1-52"><a href="#cb1-52" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-53"><a href="#cb1-53" aria-hidden="true" tabindex="-1"></a>**Question:**  </span>
+<span id="cb1-54"><a href="#cb1-54" aria-hidden="true" tabindex="-1"></a>Does a value of 0 in the metabolite matrix actually mean that the metabolite was not detected?</span>
+<span id="cb1-55"><a href="#cb1-55" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-56"><a href="#cb1-56" aria-hidden="true" tabindex="-1"></a>**Answer:**</span>
+<span id="cb1-57"><a href="#cb1-57" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-58"><a href="#cb1-58" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>No, **0 should not necessarily be interpreted as “not detected.”**</span>
+<span id="cb1-59"><a href="#cb1-59" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The value is related to the **precision/resolution of the measurement**.</span>
+<span id="cb1-60"><a href="#cb1-60" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>After data has been reported with a precision of **four decimal places**. It is up to us to decide if we want to apply a treshold, but this should be biologicaly justified.</span>
+<span id="cb1-61"><a href="#cb1-61" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** This means we should be careful about treating zeros as biological absence or automatically converting them to missing values. We should clarify the exact meaning of a reported 0 in the exported dataset before applying any imputation or filtering.</span>
+<span id="cb1-62"><a href="#cb1-62" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-63"><a href="#cb1-63" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-64"><a href="#cb1-64" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-65"><a href="#cb1-65" aria-hidden="true" tabindex="-1"></a><span class="fu">## 3. QC samples</span></span>
+<span id="cb1-66"><a href="#cb1-66" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-67"><a href="#cb1-67" aria-hidden="true" tabindex="-1"></a>**Question:**  </span>
+<span id="cb1-68"><a href="#cb1-68" aria-hidden="true" tabindex="-1"></a>Are QC samples 1–4 measurements of the same pooled material?</span>
+<span id="cb1-69"><a href="#cb1-69" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-70"><a href="#cb1-70" aria-hidden="true" tabindex="-1"></a>**Answer:**</span>
+<span id="cb1-71"><a href="#cb1-71" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-72"><a href="#cb1-72" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Yes. The QC samples are **aliquots from the same pooled material**.</span>
+<span id="cb1-73"><a href="#cb1-73" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>After aliquoting, the remaining material is pooled, and the QC samples are injected approximately **15 minutes apart**.</span>
+<span id="cb1-74"><a href="#cb1-74" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The QC samples can be used to assess **run-order drift** and provide a kind of worst-case scenario for changes in sensitivity across the analytical run.</span>
+<span id="cb1-75"><a href="#cb1-75" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The effect of run-order drift tends to penalize compounds with **low abundance**, because these compounds can disappear into the noise.</span>
+<span id="cb1-76"><a href="#cb1-76" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>These low-abundance compounds are often already close to the noise region.</span>
+<span id="cb1-77"><a href="#cb1-77" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>There can potentially be a decrease in instrument sensitivity of approximately **10% between the first and last injection**.</span>
+<span id="cb1-78"><a href="#cb1-78" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** Therefore, the repeated QC measurements provide an opportunity to assess whether metabolite intensities change systematically with injection order and whether a run-order correction is warranted.</span>
+<span id="cb1-79"><a href="#cb1-79" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-80"><a href="#cb1-80" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-81"><a href="#cb1-81" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-82"><a href="#cb1-82" aria-hidden="true" tabindex="-1"></a><span class="fu">## 4. Run-order / drift correction</span></span>
+<span id="cb1-83"><a href="#cb1-83" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-84"><a href="#cb1-84" aria-hidden="true" tabindex="-1"></a>**Question:**  </span>
+<span id="cb1-85"><a href="#cb1-85" aria-hidden="true" tabindex="-1"></a>Has any form of run-order or drift correction already been applied?</span>
+<span id="cb1-86"><a href="#cb1-86" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-87"><a href="#cb1-87" aria-hidden="true" tabindex="-1"></a>**Answer:**</span>
+<span id="cb1-88"><a href="#cb1-88" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-89"><a href="#cb1-89" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>No correction has been applied to the current dataset.</span>
+<span id="cb1-90"><a href="#cb1-90" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The biostatistician prefers that the **customer/researcher decides whether correction is necessary**.</span>
+<span id="cb1-91"><a href="#cb1-91" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>If a correction is applied, the rationale should be documented and explained — in the analysis presentation/PPT — including why the correction improves the data.</span>
+<span id="cb1-92"><a href="#cb1-92" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** We should therefore first visualize the QC samples and/or metabolite intensities as a function of injection order to determine whether there is evidence of systematic drift before applying a correction.</span>
+<span id="cb1-93"><a href="#cb1-93" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-94"><a href="#cb1-94" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-95"><a href="#cb1-95" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-96"><a href="#cb1-96" aria-hidden="true" tabindex="-1"></a><span class="fu">## 5. RSD and quality filtering</span></span>
+<span id="cb1-97"><a href="#cb1-97" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-98"><a href="#cb1-98" aria-hidden="true" tabindex="-1"></a>**Question:**  </span>
+<span id="cb1-99"><a href="#cb1-99" aria-hidden="true" tabindex="-1"></a>How was the RSD determined, and is there a standard cutoff?</span>
+<span id="cb1-100"><a href="#cb1-100" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-101"><a href="#cb1-101" aria-hidden="true" tabindex="-1"></a>**Notes from meeting:**</span>
+<span id="cb1-102"><a href="#cb1-102" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-103"><a href="#cb1-103" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>RSD is essentially calculated as:</span>
+<span id="cb1-104"><a href="#cb1-104" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-105"><a href="#cb1-105" aria-hidden="true" tabindex="-1"></a>  $$\mathrm{RSD}(\%) = \frac{\mathrm{SD}}{\mathrm{mean}} \times 100$$</span>
+<span id="cb1-106"><a href="#cb1-106" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-107"><a href="#cb1-107" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>An example of an injection standard mentioned was **octanoic acid**, with an RSD of approximately **12%**.</span>
+<span id="cb1-108"><a href="#cb1-108" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Our swab samples are inherently more variable because **the amount/material collected per swab is not standardized**.</span>
+<span id="cb1-109"><a href="#cb1-109" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Therefore, we may expect larger biological/technical variability between swab samples than would be expected for a standardized sample.</span>
+<span id="cb1-110"><a href="#cb1-110" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Internal standards can also create issues if present at very high concentrations, because they may affect metabolites that **elute in the same region**.</span>
+<span id="cb1-111"><a href="#cb1-111" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Thus the concntrations used for the internal standards are very low, this is so that they avoid supressing/compressing the signal from the actual samples.</span>
+<span id="cb1-112"><a href="#cb1-112" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** There does not appear to be a single universal RSD cutoff that should automatically be applied to our dataset. The appropriate threshold should take into account the sample type, expected technical variability, metabolite abundance, and purpose of the analysis.</span>
+<span id="cb1-113"><a href="#cb1-113" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-114"><a href="#cb1-114" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-115"><a href="#cb1-115" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-116"><a href="#cb1-116" aria-hidden="true" tabindex="-1"></a><span class="fu">## 6. Scaling for multi-omics integration</span></span>
+<span id="cb1-117"><a href="#cb1-117" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-118"><a href="#cb1-118" aria-hidden="true" tabindex="-1"></a>**Question:**  </span>
+<span id="cb1-119"><a href="#cb1-119" aria-hidden="true" tabindex="-1"></a>For the purpose of integrating the metabolomics data with other omics datasets, would you recommend keeping the metabolomics data as they are and only applying feature scaling?</span>
+<span id="cb1-120"><a href="#cb1-120" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-121"><a href="#cb1-121" aria-hidden="true" tabindex="-1"></a>**Notes:**</span>
+<span id="cb1-122"><a href="#cb1-122" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-123"><a href="#cb1-123" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Log scaling can be justified** if it improves the results of the analysis.</span>
+<span id="cb1-124"><a href="#cb1-124" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The recommendation was to **perform the analysis both with and without log transformation** and compare the results to assess whether the transformation makes a meaningful difference.</span>
+<span id="cb1-125"><a href="#cb1-125" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>The overall take-home message was that **there is no single mandatory preprocessing approach**. Different approaches can be appropriate as long as they are **well justified and consistently applied**.</span>
+<span id="cb1-126"><a href="#cb1-126" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** For our analysis, this means that we could compare different preprocessing strategies (e.g., with and without log transformation) and assess whether the biological conclusions and/or statistical performance are robust to the choice of preprocessing.</span>
+<span id="cb1-127"><a href="#cb1-127" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** Any preprocessing decisions should be clearly documented so that the rationale for the chosen approach is transparent and reproducible.</span>
+<span id="cb1-128"><a href="#cb1-128" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-129"><a href="#cb1-129" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-130"><a href="#cb1-130" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-131"><a href="#cb1-131" aria-hidden="true" tabindex="-1"></a><span class="fu">## 7. Enrichment analysis</span></span>
+<span id="cb1-132"><a href="#cb1-132" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-133"><a href="#cb1-133" aria-hidden="true" tabindex="-1"></a>**Question:**  </span>
+<span id="cb1-134"><a href="#cb1-134" aria-hidden="true" tabindex="-1"></a>How can enrichment analysis be applied to this metabolomics dataset?</span>
+<span id="cb1-135"><a href="#cb1-135" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-136"><a href="#cb1-136" aria-hidden="true" tabindex="-1"></a>**Answer:**</span>
+<span id="cb1-137"><a href="#cb1-137" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-138"><a href="#cb1-138" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Most enrichment methods are **coverage-based**.</span>
+<span id="cb1-139"><a href="#cb1-139" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>They primarily tell you:</span>
+<span id="cb1-140"><a href="#cb1-140" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>which metabolites have been measured;</span>
+<span id="cb1-141"><a href="#cb1-141" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>which pathways those metabolites are associated with;</span>
+<span id="cb1-142"><a href="#cb1-142" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>whether the measured metabolites provide coverage of particular metabolic pathways.</span>
+<span id="cb1-143"><a href="#cb1-143" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[INCOMPLETE IN ORIGINAL NOTES]**</span>
+<span id="cb1-144"><a href="#cb1-144" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** This distinction is important because pathway/enrichment analysis of metabolomics data is constrained by the metabolites that the analytical platform can actually detect. A pathway may therefore appear poorly represented simply because the assay does not measure all of its constituent metabolites.</span>
+<span id="cb1-145"><a href="#cb1-145" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** If we have quantitative information for the metabolites, we may also consider approaches that incorporate metabolite abundance rather than only asking whether a metabolite was detected. The exact method should depend on whether we are interested in pathway coverage, differential abundance, or pathway-level changes.</span>
+<span id="cb1-146"><a href="#cb1-146" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-147"><a href="#cb1-147" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-148"><a href="#cb1-148" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-149"><a href="#cb1-149" aria-hidden="true" tabindex="-1"></a><span class="fu">## 8. OPLS / PLS-DA</span></span>
+<span id="cb1-150"><a href="#cb1-150" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-151"><a href="#cb1-151" aria-hidden="true" tabindex="-1"></a>**Notes from meeting:**</span>
+<span id="cb1-152"><a href="#cb1-152" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-153"><a href="#cb1-153" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**OPLS is useful for interpretation**, but is otherwise similar to PLS-DA.</span>
+<span id="cb1-154"><a href="#cb1-154" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>OPLS essentially **reorganizes the components** so that the variation related to the outcome/class separation is distinguished from orthogonal variation.</span>
+<span id="cb1-155"><a href="#cb1-155" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>Both approaches provide:</span>
+<span id="cb1-156"><a href="#cb1-156" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>**scores**, which describe the samples;</span>
+<span id="cb1-157"><a href="#cb1-157" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>**loadings**, which help identify the variables/metabolites contributing to the model.</span>
+<span id="cb1-158"><a href="#cb1-158" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** The main advantage of OPLS for interpretation is therefore that it separates predictive variation from variation unrelated to the response, which can make the resulting plots and metabolite interpretation easier.</span>
+<span id="cb1-159"><a href="#cb1-159" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-160"><a href="#cb1-160" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-161"><a href="#cb1-161" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-162"><a href="#cb1-162" aria-hidden="true" tabindex="-1"></a><span class="fu">## 9. Visualization</span></span>
+<span id="cb1-163"><a href="#cb1-163" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-164"><a href="#cb1-164" aria-hidden="true" tabindex="-1"></a>**Notes from meeting:**</span>
+<span id="cb1-165"><a href="#cb1-165" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-166"><a href="#cb1-166" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Volcano plots** are typical for visualizing differential metabolite abundance.</span>
+<span id="cb1-167"><a href="#cb1-167" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**Bar plots** are also commonly used to display metabolite-level results.</span>
+<span id="cb1-168"><a href="#cb1-168" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span>**[ADDED / INFERRED]** Depending on the research question, other useful visualizations could include:</span>
+<span id="cb1-169"><a href="#cb1-169" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>PCA score plots;</span>
+<span id="cb1-170"><a href="#cb1-170" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>heatmaps;</span>
+<span id="cb1-171"><a href="#cb1-171" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>correlation plots;</span>
+<span id="cb1-172"><a href="#cb1-172" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>pathway plots;</span>
+<span id="cb1-173"><a href="#cb1-173" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>OPLS/PLS score plots;</span>
+<span id="cb1-174"><a href="#cb1-174" aria-hidden="true" tabindex="-1"></a><span class="ss">  - </span>OPLS/PLS loading plots.</span>
+<span id="cb1-175"><a href="#cb1-175" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-176"><a href="#cb1-176" aria-hidden="true" tabindex="-1"></a>---</span>
+<span id="cb1-177"><a href="#cb1-177" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-178"><a href="#cb1-178" aria-hidden="true" tabindex="-1"></a><span class="fu">## Points requiring clarification</span></span>
+<span id="cb1-179"><a href="#cb1-179" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-180"><a href="#cb1-180" aria-hidden="true" tabindex="-1"></a>There are a few places where the notes are sufficiently incomplete that these should be confirmed with the biostatistician rather than treated as definitive:</span>
+<span id="cb1-181"><a href="#cb1-181" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-182"><a href="#cb1-182" aria-hidden="true" tabindex="-1"></a><span class="ss">1. </span>**Internal standard &lt;10%**</span>
+<span id="cb1-183"><a href="#cb1-183" aria-hidden="true" tabindex="-1"></a><span class="ss">   - </span>Confirm exactly what the 10% refers to.</span>
+<span id="cb1-184"><a href="#cb1-184" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-185"><a href="#cb1-185" aria-hidden="true" tabindex="-1"></a><span class="ss">2. </span>**Different fragments**</span>
+<span id="cb1-186"><a href="#cb1-186" aria-hidden="true" tabindex="-1"></a><span class="ss">   - </span>Confirm what was meant by the statement that the values between fragments differ but the proportion remains the same.</span>
+<span id="cb1-187"><a href="#cb1-187" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-188"><a href="#cb1-188" aria-hidden="true" tabindex="-1"></a><span class="ss">3. </span>**Log transformation**</span>
+<span id="cb1-189"><a href="#cb1-189" aria-hidden="true" tabindex="-1"></a><span class="ss">   - </span>Confirm whether log transformation was recommended before or after the 0–100 scaling, since the order of these operations matters.</span>
+<span id="cb1-190"><a href="#cb1-190" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-191"><a href="#cb1-191" aria-hidden="true" tabindex="-1"></a><span class="ss">4. </span>**Zeros**</span>
+<span id="cb1-192"><a href="#cb1-192" aria-hidden="true" tabindex="-1"></a><span class="ss">   - </span>Confirm exactly what a reported <span class="in">`0`</span> represents in the core facility's data-processing pipeline.</span>
+<span id="cb1-193"><a href="#cb1-193" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-194"><a href="#cb1-194" aria-hidden="true" tabindex="-1"></a><span class="ss">5. </span>**RSD cutoff**</span>
+<span id="cb1-195"><a href="#cb1-195" aria-hidden="true" tabindex="-1"></a><span class="ss">   - </span>Confirm whether a specific RSD threshold was recommended for filtering metabolites.</span>
+<span id="cb1-196"><a href="#cb1-196" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-197"><a href="#cb1-197" aria-hidden="true" tabindex="-1"></a><span class="ss">6. </span>**Multi-omics integration**</span>
+<span id="cb1-198"><a href="#cb1-198" aria-hidden="true" tabindex="-1"></a><span class="ss">   - </span>The answer is missing from the original notes, so the discussion above is **[ADDED / INFERRED]** and should not be attributed directly to the biostatistician without confirmation.</span>
+<span id="cb1-199"><a href="#cb1-199" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-200"><a href="#cb1-200" aria-hidden="true" tabindex="-1"></a><span class="ss">7. </span>**Enrichment analysis**</span>
+<span id="cb1-201"><a href="#cb1-201" aria-hidden="true" tabindex="-1"></a><span class="ss">   - </span>The notes capture the beginning of the answer but not the specific method(s) they may have recommended.</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div></div></div></div></div>
+</div> <!-- /content -->
+
+
+
+</body></html>
