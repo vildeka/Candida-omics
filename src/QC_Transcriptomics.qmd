@@ -60,6 +60,119 @@ rename <- dplyr::rename
 # setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
 ```
 
+```{r pallets}
+#| code-fold: true
+pal <- list(
+  CST = c(
+    "I" = "#148F77",
+    "II" = "#6d9f06",
+    "III" = "#A3E4D7",
+    "IV-B" = "#E794C1",
+    "IV-C" = "#b5cb8c",
+    "V" = "#43BA8F"
+  ),
+  subCST = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#91c5de"
+  ),
+  "Fungal culture: C. albicans (y/n)" = c("#EAEAEA", "#fd814e"),
+  RVVC = c("#EAEAEA", "#fd814e"),
+  BV = c("#EAEAEA", "#fd814e"),
+  NAC = c("#EAEAEA", "#fd814e"),
+  ST = c("#EAEAEA", "#fd814e"),
+  missing_page = c("#EAEAEA", "#fd814e"),
+  Clin = c("#a5c97b", "#cc93cf", "#de9548", "#63d3b4", "#9e8dec", "#902267"),
+  Clin_gr = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_AS = c("#ffa998", '#FB5273', "#902267"),
+  RVVC_pos = c(
+    "#A6CEE3",
+    "#1F78B4",
+    #"#EAEAEA",
+    #"gray",
+    "#e490c4ff",
+    "#c12d88ff"
+  ), # "#FB9A99", "#E31A1C", "#B2DF8A", "#609c5bff", "#FDBF6F", "#FF7F00",, "#CAB2D6", "#6a3d9a" "#e490c4ff", "#c12d88ff"
+  trx_louvain_7 = c(
+    "#de9548",
+    "#cc93cf",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4"
+    #'#FB5273'
+  ),
+  metab_louvain = c(
+    "#cc93cf",
+    "#a5c97b",
+    "#de9548",
+    "#902267",
+    "#9e8dec",
+    "#63d3b4"
+    #'#FB5273'
+  ),
+  microb_louvain = c(
+    "#cc93cf",
+    "#de9548",
+    "#a5c97b",
+    "#9e8dec",
+    "#902267",
+    "#63d3b4",
+    '#FB5273',
+    "#B3CDE3"
+  ),
+  fun_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273'
+    #"#984EA3"
+    #"#B3CDE3"
+  ),
+  integ_louvain = c(
+    "#a5c97b",
+    "#cc93cf",
+    "#de9548",
+    "#63d3b4",
+    "#9e8dec",
+    "#902267",
+    '#FB5273',
+    "#984EA3"
+    #"#B3CDE3"
+  ),
+  "Wet_smear:_clue_cells_(y/n)" = c("#2266ac", "#91c5de"),
+  hyphae = c("#f26386", "#fd814e", "#a4d984", "#fbbc52"),
+  pos = c("#91c5de", "#2266ac"),
+  fct1_clus = c("#33A02C", "#B2DF8A", "#FF7F00", "#FDBF6F"), #"#FDBF6F" "#FF7F00", "#CAB2D6", "#6A3D9A"
+  "Clinical score (0-5)" = brewer.pal(6, name = "Reds"),
+  "Clinical_score_(0-5)" = brewer.pal(6, name = "Reds")
+)
+
+gg_color_hue <- function(n) {
+  hues <- seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+# colour pallets
+blue <- brewer.pal(6, name = "Blues") %>% c(., "gray")
+Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray")
+pal4 <- c("#f26386", "#fd814e", "#a4d984", "#fbbc52") # "#f588af", "#fd814e"
+pal2 <- c("#2266ac", "#91c5de")
+
+#Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray")
+pal1 <- c("#ffa998", "#f17730ff", "#902267") #
+pal3 <- c("#9e8dec", "#cc93cf", "#a5c97b", "#de9548") #"#abcb4b" "#63d3b4" "#902267",
+
+```
+
 ## Sample Information
 
 There are only two biopsies collected in the longitudinal study —  
@@ -78,14 +191,14 @@ at **visit 02** and **visit 04**, corresponding to **baseline** and the **3-mont
 
 The samples have been run in three sequencing batches:
 
-- **Run 1:** `BEA23P074_23`  
-- **Run 2:** `BEA24P003_28`
-- **Run 3:** `BEA`
+- **Run 1:** `BEA23P074`  (n = 38)
+- **Run 2:** `BEA24P003`  (n = 54)
+- **Run 3:** `BEA26P064`  (n = 24)
 
 #### Sample Summary
 
 Based on the files delivered from BEA, I believe we have sequenced:  
-**81 unique samples**, of which **73 are baseline** and **8 are 3-month follow-up**.
+**97 unique samples**, of which **79 are baseline** and **18 are 3-month follow-up**.
 
 NB! The baseline sample of **(S69)** has `12:01` (DS_ID) listed as baseline instead of `12:02`.
 This was a mistake, but we decided to keep it. 
@@ -105,6 +218,7 @@ FF060322243, FF060322244, 231025:1, 230918., 231108:1, 231108:1
 #############
 Clin_path <- "../data/Metadata_svamp_FINAL.xlsx"
 comb_meta_path <- "../Results/Combined_gr_meta_data_all.csv"
+m <- read_csv("../Results/Sample_omic_table.csv")
 
 # meta data
 Clin_data <- read_xlsx(Clin_path, sheet = "Metadata", na = "na")
@@ -121,6 +235,7 @@ trx_mapping <- read_csv(mapping_path)
 
 ```{r check-trx-samples-missing}
 #| code-fold: true
+#| eval: false
 meta_trx <- meta %>%
   filter(svamp_ID %in% colnames(raw_matrix))
 
@@ -186,6 +301,136 @@ write_csv(
 )
 ```
 
+```{r n-sample-types}
+trx_mapping %>%
+  mutate(
+    sample_type = case_when(
+    str_detect(svamp_ID, "NA_") ~ "QC",
+    str_detect(svamp_ID, regex("run", ignore_case = TRUE)) ~ "batch",
+    str_detect(svamp_ID, "_(3M|1W|6M)$") ~ "followup",
+    str_detect(svamp_ID, "^S\\d\\d$|^S\\d\\d_BL") ~ "baseline",
+    TRUE ~ NA_character_
+    ), .after="svamp_ID"
+) %>% split(~Batch) %>% map(., ~summarise(.x, n_samples = n(), .by="sample_type"))
+```
+### Some quick QC
+
+```{r QC-plotting}
+#| code-fold: true
+#| fig-width: 13
+#| fig-height: 10
+trx_qc <- trx_mapping %>%
+  mutate(
+    Batch = str_extract(trx_mapping$`BEA ID`, "^[^_]+"),
+    input_reads = as.numeric(Number_of_input_reads),
+    uniquely_mapped = as.numeric(Number_uniquely_mapped),
+    mapping_rate = uniquely_mapped / input_reads * 100
+  )
+
+# Sequencing depth vs uniquely mapped reads
+p_depth <- ggplot(
+  trx_qc,
+  aes(x = input_reads / 1e6, y = uniquely_mapped / 1e6)
+) +
+  geom_point(aes(col = Batch), size = 2.5, alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0, linetype = 2) +
+  labs(
+    x = "Input reads (millions)",
+    y = "Uniquely mapped reads (millions)",
+    shape = "RIN available"
+  ) +
+  theme_bw()
+
+# RIN vs mapping rate:
+p_rin <- trx_qc %>%
+  filter(!is.na(RIN)) %>%
+  ggplot(aes(x = RIN, y = mapping_rate)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.7) +
+  labs(
+    x = "RIN",
+    y = "Uniquely mapped reads (%)"
+  ) +
+  theme_bw()
+
+# reads per batch overview:
+sum_reads <- as.numeric(summarise(
+  raw_matrix,
+  across(matches("S\\d\\d"), ~ sum(.x, na.rm = TRUE))
+)[1, ])
+names(sum_reads) <- colnames(select(raw_matrix, matches("S\\d\\d")))
+trx_qc <- trx_mapping %>%
+  mutate(
+    Batch = str_extract(trx_mapping$`BEA ID`, "^[^_]+"),
+    total = as.numeric(Number_of_input_reads),
+    unique = as.numeric(Number_uniquely_mapped),
+    # calculate the missing values
+    genes = sum_reads[svamp_ID] * 2,
+    .after = "Number_mapped_in_genes",
+
+    other = total - unique,
+    unique_not_genes = unique - genes
+  ) %>%
+  select(svamp_ID, total, other, unique_not_genes, genes, Batch) %>%
+  pivot_longer(
+    cols = c(other, unique_not_genes, genes),
+    names_to = "read_category",
+    values_to = "reads"
+  ) %>%
+  mutate(
+    read_category = factor(
+      read_category,
+      levels = c("genes", "unique_not_genes", "other"),
+      labels = c(
+        "Mapped in genes",
+        "Uniquely mapped, not in genes",
+        "Not uniquely mapped"
+      )
+    )
+  )
+
+
+batch <- ggplot(
+  trx_qc,
+  aes(
+    x = svamp_ID,
+    y = reads,
+    fill = read_category
+  )
+) +
+  geom_col(width = 0.9) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "M")
+  ) +
+  labs(
+    x = "Samples",
+    y = "Reads",
+    fill = "Read category"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(
+      angle = 90,
+      hjust = 1,
+      vjust = 0.5
+    ),
+    panel.grid.major.x = element_blank()
+  ) +
+  facet_wrap(~Batch, space = "free_x", scales = "free_x")
+
+# quartz(width = 13, height = 8, dpi = 120)
+plot_grid(plot_grid(p_depth, p_rin), batch, ncol = 1)
+```
+The faceted bar plot illustrates the allocation of sequencing reads across samples and sequencing batches, with the majority of reads being uniquely mapped and subsequently assigned to genes. Each category is mutualy exclusive, with each read beeing represented exactly once: 
+
+Total input reads:\
+├── Not uniquely mapped\
+├── Uniquely mapped, not in genes\
+└── Mapped in genes\
+
+Plot shows the number of reads in each sample. The red shows the uniquely mapped reads in genes, the blue how many reads were uniquely aligned in genes (exons), and the green shows how many of the the reads that is aligned to one unique site in the genome, outside of genes. The plot shows absolute number of reads.
+
 ## Step 1: Metadata and group assignment
 NB! the reccuring fungal infection question was only answered once at baseline, thus you ave to extraploate from the baseline if they have it at follow up
 
@@ -193,11 +438,10 @@ NB! the reccuring fungal infection question was only answered once at baseline, 
 ### Check the distribution of samples per groups
 ```{r group-distribution}
 vars <- c(
+  "RVVC_pos",
   "Clinical score (0-5)",
   "Clin_gr",
-  "group",
   "hyphae",
-  "RVVC_pos",
   "group_cross"
 ) %>%
   set_names()
@@ -217,20 +461,53 @@ countTable <- raw_matrix %>%
 
 # Create matrix countTable
 countTable <- countTable %>%
-  select(-c(1:6), -entrez) %>% # remove metadata columns
   filter(!is.na(symbol)) %>% # remove rows without a symbol
-  filter(if_any(where(is.numeric), ~ . != 0)) %>% # remove rows that are all zeros
+  filter(gene_biotype == "protein_coding") %>%
+
+  filter(rowSums(across(matches("S\\d\\d")) != 0) > 0) #%>% # remove rows that are all zeros
+
+# select(-c(3:9)) %>% # remove metadata columns
+# summarise(
+#   across(where(is.numeric), \(x) sum(x, na.rm = TRUE)),
+#   .by = "symbol"
+# )
+
+vars <- c(
+  "symbol",
+  "gene_biotype",
+  "entrez",
+  "Chr",
+  "Start",
+  "End",
+  "Strand",
+  "Length"
+)
+ensembl_info <- select(countTable, ensembl, any_of(vars))
+ensembl_to_symbol <- set_names(ensembl_info$symbol, ensembl_info$ensembl)
+# write.csv("../Tidy_data/Transcriptomics/ensembl_info.csv")
+
+ensembl_info %>%
+  select(ensembl, symbol) %>%
+  group_by(symbol) %>%
   summarise(
-    across(where(is.numeric), \(x) sum(x, na.rm = TRUE)),
-    .by = "symbol"
-  )
+    n_rows = n(),
+    ensembl = paste(ensembl, collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_rows)) %>%
+  filter(n_rows > 1)
 ```
 
 ```{r number-of-samples}
 # number of uniqe samples excluding "_run2" samples
-samples <- select(countTable, where(is.numeric) & !(matches("_run2$"))) %>%
+samples <- select(
+  countTable,
+  matches("S\\d\\d+") & !(matches("_run2$|_run3$"))
+) %>%
   colnames()
 length(samples)
+
+MOFA_samples <- intersect(samples, m$sample[m$at_least_two & m$all_BL])
 ```
 
 ## Step 2: Normalize counts with TMM 
@@ -240,9 +517,10 @@ length(samples)
 
 # get normalized matrix
 # Create DGElist object to relate counts to groups
-dge <- countTable %>%
-  column_to_rownames(., var = "symbol") %>%
-  DGEList(.)
+matrix <- select(countTable, -c(3:9), -symbol)
+dge <- matrix %>%
+  column_to_rownames(., var = "ensembl") %>%
+  DGEList(., genes = ensembl_info)
 
 # Normalize counts with TMM
 dge_TMM <- calcNormFactors(dge, method = "TMM")
@@ -259,7 +537,7 @@ By looking at the histogram of the mean log2 CPM values you can determine what l
 #| fig-cap: "Figure 1: Histogram of mean log2 CPM expression per gene. The vertical gray dashed line marks 1.5 log2 cpm"
 
 # Identify low count cut-off
-meanLog2CPM <- rowMeans(log2(cpm(countTable[, -1]) + 1))
+meanLog2CPM <- rowMeans(log2(cpm(matrix[, -1]) + 1))
 # hist(meanLog2CPM)
 ggplot() +
   geom_histogram(aes(meanLog2CPM), fill = "red", alpha = 0.7, bins = 50) +
@@ -274,18 +552,22 @@ s <- sum(meanLog2CPM <= 1.5)
 # knitr::kable(., digits = 1)
 # Alternative 1.
 genes_keep_1 <- countTable %>%
-  filter(rowMeans(across(any_of(samples))) > 1.5) %>%
-  pluck(., "symbol")
+  filter(rowMeans(across(any_of(MOFA_samples))) > 1.5) %>%
+  pluck(., "ensembl")
 
+# look at top filtered genes:
 countTable %>%
-  mutate(meanLog2CPM = rowMeans(across(any_of(samples))), .after = "symbol") %>%
   mutate(
-    cumulative_sum = rowSums(across(any_of(samples))),
+    meanLog2CPM = rowMeans(across(any_of(MOFA_samples))),
+    .after = "symbol"
+  ) %>%
+  mutate(
+    cumulative_sum = rowSums(across(any_of(MOFA_samples))),
     .after = "symbol"
   ) %>%
   filter(meanLog2CPM < 1.5) %>%
   arrange(desc(cumulative_sum)) %>%
-  select(1:3)
+  select(1:4)
 ```
 
 A cuttof at 1.5 seem to be appropriate and would result in the removal of `{r} s` genes. 
@@ -303,22 +585,26 @@ Keep genes where CPM > 1 in more than 3 samples
 cpm_TMM <- cpm(dge_TMM, log = FALSE)
 
 genes_keep_2 <- cpm_TMM %>%
-  as_tibble(., rownames = "symbol") %>%
-  filter(rowSums(across(all_of(samples), ~ .x >= 1)) >= 3) %>%
-  pluck(., "symbol")
+  as_tibble(., rownames = "ensembl") %>%
+  filter(rowSums(across(all_of(MOFA_samples), ~ .x >= 1)) >= 3) %>%
+  pluck(., "ensembl")
 
-# look at top filtered genes
+# look at top filtered genes:
 cpm_TMM %>%
-  as_tibble(., rownames = "symbol") %>%
-  filter(!(symbol %in% genes_keep_2)) %>%
+  as_tibble(., rownames = "ensembl") %>%
+  filter(!(ensembl %in% genes_keep_2)) %>%
   mutate(
-    n_over_1cpm = rowSums(across(all_of(samples), ~ .x >= 1)),
-    .after = "symbol"
+    n_over_1cpm = rowSums(across(all_of(MOFA_samples), ~ .x >= 1)),
+    .after = "ensembl"
   ) %>%
-  mutate(sum_cpm = rowSums(across(all_of(samples))), .after = "symbol") %>%
+  mutate(
+    sum_cpm = rowSums(across(all_of(MOFA_samples))),
+    .after = "ensembl"
+  ) %>%
+  mutate(symbol = ensembl_to_symbol[.$ensembl], , .after = "ensembl") %>%
   filter(n_over_1cpm < 3) %>%
   arrange(desc(n_over_1cpm)) %>%
-  select(1:3)
+  select(1:4)
 
 length(genes_keep_1)
 length(genes_keep_2)
@@ -330,13 +616,20 @@ Alternative 2 is more sensitive.
 We go for alternative 2 as more than 16 000 genes is more than enough.
 
 ```{r filter-genes}
+# Check for duplicate symbols:
+ensembl_info %>%
+  filter(ensembl %in% genes_keep_2) %>%
+  group_by(symbol) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n))
+
 # Step 3. filter low abundant genes
 # DEGlist object
 dge_TMM_filt <- dge_TMM[genes_keep_2, ]
 
 # count table
 countTable_filt <- countTable %>%
-  filter(symbol %in% genes_keep_2)
+  filter(ensembl %in% genes_keep_2)
 ```
 
 ## Step 4: Save filtered and normalized counts
@@ -346,11 +639,14 @@ countTable_filt <- countTable %>%
 # SAVE NORMALIZED DATA #
 ########################
 cpm_log_TMM <- cpm(dge_TMM_filt, log = T) # for heatmap
+rownames(cpm_log_TMM) <- ensembl_to_symbol[rownames(cpm_log_TMM)]
 
 cpm_log_TMM %>%
-  as_tibble(., rownames = "symbol") %>%
+  as_tibble(., rownames = "ensembl") %>%
+  right_join(ensembl_info, ., by = "ensembl") %>%
   # remove samples sequenced twice
-  select(symbol, all_of(samples)) %>%
+  select(ensembl, all_of(MOFA_samples)) %>%
+
   write_csv(., "../Results/MixOmic/Transcriptomics_Normalized_filt.csv")
 # norm <- read_csv("../Results/MixOmic/Transcriptomics_Normalized_filt.csv")
 
@@ -367,9 +663,9 @@ cpm_log_TMM %>%
 ```{r HVG}
 
 counts <- countTable %>%
-  filter(symbol %in% genes_keep_2) %>%
+  filter(ensembl %in% genes_keep_2) %>%
   column_to_rownames(., var = "symbol") %>%
-  select(any_of(samples))
+  select(any_of(MOFA_samples))
 
 coldata <- data.frame(
   row.names = colnames(counts)
@@ -393,7 +689,12 @@ top_hvg <- tibble(
   variance = vars[hvg_idx]
 )
 
+# top_hvg_old <- read_csv("../Results/Tissue_QC/HVG.csv")
+# write_csv(top_hvg_old, "../Results/Tissue_QC/HVG_old.csv")
+
 write_csv(top_hvg, "../Results/Tissue_QC/HVG.csv")
+top_hvg_old <- read_csv("../Results/Tissue_QC/HVG_old.csv")
+length(intersect(top_hvg_old$gene[1:5000], top_hvg$gene[1:5000]))
 ```
 
 ## Step 5: compare re-sequenced samples
@@ -401,21 +702,20 @@ write_csv(top_hvg, "../Results/Tissue_QC/HVG.csv")
 ```{r compare-re-sequenced-samples}
 #| fig-width: 10
 #| fig-height: 8
-#| fig-cap: "Figure 3: Comparison of technical replicates across sequencing runs. Scatterplots show log₂-transformed CPM values for the same biological samples sequenced in two independent sequencing runs. Each point represents one gene. The dashed red line indicates the 1:1 relationship expected for perfect agreement between runs. Overall, the replicate samples display high concordance, confirming that technical variation between sequencing runs is minimal relative to biological signal.  Pearson and Spearman correlation coefficients were calculated for each sample pair and are summarized in the accompanying table."
-#| code-fold: false
+#| code-fold: true
 #| eval: true
 
 #############################
 # PLOT RE-SEQUENCED SAMPLES #
 #############################
-n <- names(select(countTable, contains("_run2")))
-samp <- str_remove(n, "_run2")
-n <- c(n, samp) # samples sequenced twice
+n <- names(select(countTable, contains("_run2"), contains("_run3")))
+samp <- str_remove(n, "_run\\d")
+#n <- c(n, samp) # samples sequenced twice
 
 # Create a tidy summary comparing all pairs
 pair_summary <- map_dfr(samp, function(samp) {
   run1 <- cpm_log_TMM[, samp, drop = TRUE]
-  run2 <- cpm_log_TMM[, paste0(samp, "_run2"), drop = TRUE]
+  run2 <- cpm_log_TMM[, n, drop = TRUE]
 
   tibble(
     sample = samp,
@@ -424,37 +724,71 @@ pair_summary <- map_dfr(samp, function(samp) {
     mean_diff = mean(run1 - run2),
     sd_diff = sd(run1 - run2)
   )
-})
+}) %>% mutate(., run = str_extract(n, "run\\d"), .after="sample")
 
 knitr::kable(pair_summary)
 
 # generate one plot per pair
-air_plots <- map(samp, function(samp) {
-  df <- tibble(
-    gene = rownames(cpm_log_TMM),
-    run1 = cpm_log_TMM[, samp],
-    run2 = cpm_log_TMM[, paste0(samp, "_run2")]
-  )
+make_air_plots <- function(run = "run2") {
+   # Get columns corresponding to this sample and selected run
+  n <- names(select(countTable, contains(paste0("_", run))))
+  map(n, function(samp) {
 
-  ggplot(df, aes(x = run1, y = run2)) +
-    geom_point(alpha = 0.3) +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
-    labs(
-      title = paste("Comparison:", samp),
-      x = "Run1 log2-CPM",
-      y = "Run2 log2-CPM"
-    ) +
-    theme_minimal()
-}) %>%
-  set_names(samp)
+      df <- tibble(
+        gene = rownames(cpm_log_TMM),
+        run1 = cpm_log_TMM[, str_remove(n, "_run\\d")],
+        run2 = cpm_log_TMM[, n]
+      )
 
-cowplot::plot_grid(plotlist = air_plots, ncol = 2)
+      ggplot(df, aes(x = run1, y = run2)) +
+        geom_point(alpha = 0.3) +
+        geom_abline(
+          slope = 1,
+          intercept = 0,
+          linetype = "dashed",
+          color = "red"
+        ) +
+        labs(
+          title = paste("Comparison:", str_remove(samp, "_run\\d")),
+          x = "Run1 log2-CPM",
+          y = paste0(run, " log2-CPM")
+        ) +
+        theme_minimal()
+    }) %>%
+      set_names(str_remove(n, "_run\\d"))
+}
+air_plots_run2 <- make_air_plots(run = "run2")
+air_plots_run3 <- make_air_plots(run = "run3")
+
+```
+
+```{r}
+#| fig-width: 10
+#| fig-height: 8
+#| warning: false
+# quartz(width = 10, height = 8, dpi = 110)
+cowplot::plot_grid(plotlist = air_plots_run2, ncol = 2)
+```
+
+```{r}
+#| fig-width: 10
+#| fig-height: 10
+#| warning: false
+#| fig-cap: "Figure: Comparison of technical replicates across sequencing runs. Scatterplots show log₂-transformed CPM values for the same biological samples sequenced in two independent sequencing runs. Each point represents one gene. The dashed red line indicates the 1:1 relationship expected for perfect agreement between runs. Overall, the replicate samples display high concordance, confirming that technical variation between sequencing runs is minimal relative to biological signal.  Pearson and Spearman correlation coefficients were calculated for each sample pair and are summarized in the accompanying table."
+# quartz(width = 10, height = 11, dpi = 110)
+cowplot::plot_grid(plotlist = air_plots_run3, ncol = 2)
 ```
 
 ```{r QC}
-
+#| code-fold: true
+ensembl_vars <- c("ensembl",
+    "gene_biotype",
+    "entrez",
+    "Chr", "Start", "End", "Strand", "Length"
+  )
 # Convert counts to long format
 long_counts <- countTable_filt %>%
+  select(-any_of(ensembl_vars)) %>%
   pivot_longer(
     cols = -symbol,
     names_to = "svamp_ID",
@@ -520,69 +854,116 @@ ggplot(qc_df, aes(x = batch, y = percent_mito, fill = batch)) +
 ```{r filter-samples}
 countTable_final <- countTable_filt %>%
   # remove samples sequenced twice
-  select(-ends_with("_run2")) %>%
+  select(-ends_with("_run2"), -ends_with("_run3")) %>%
   # remove controll samples
   select(-starts_with("NA"))
 ```
 
 
 ```{r batch-QC}
-batch_smpl <- countTable_filt[, c("symbol", n), drop = TRUE]
-# Convert to long format
-long_counts <- batch_smpl %>%
-  pivot_longer(
-    cols = -symbol,
-    names_to = "sample",
-    values_to = "counts"
-  ) %>%
-  mutate(
-    run = ifelse(grepl("_run2$", sample), "run2", "run1"),
-    bio_sample = gsub("_run2$", "", sample),
-    is_mito = grepl("^MT", symbol)
-  )
+#| code-fold: true
+make_qc_plots <- function(countTable_filt, run = "run2") {
+# Select symbol + the relevant columns
+  n <- names(select(countTable, contains(paste0("_", run))))
+  batch_smpl <- countTable_filt[, c("symbol", str_remove(n, "_run\\d"),n), drop = TRUE]
+  
+  # Convert to long format
+  long_counts <- batch_smpl %>%
+    pivot_longer(
+      cols = -symbol,
+      names_to = "sample",
+      values_to = "counts"
+    ) %>%
+    mutate(
+      run = ifelse(
+        grepl("run", sample), run, "run1"),
+      bio_sample = str_replace(sample, paste0("_", run, "$"), ""),
+      is_mito = grepl("^MT", symbol)
+    )
 
-qc_df <- long_counts %>%
-  group_by(bio_sample, run) %>%
-  summarise(
-    total_counts = sum(counts),
-    mito_counts = sum(counts[is_mito]),
-    percent_mito = mito_counts / total_counts * 100,
-    .groups = "drop"
-  )
+  # Calculate QC metrics
+  qc_df <- long_counts %>%
+    group_by(bio_sample, run) %>%
+    summarise(
+      total_counts = sum(counts),
+      mito_counts = sum(counts[is_mito]),
+      percent_mito = mito_counts / total_counts * 100,
+      .groups = "drop"
+    )
 
-ggplot(qc_df, aes(x = run, y = total_counts, group = bio_sample)) +
-  geom_line(alpha = 0.6) +
-  geom_point(size = 3) +
-  theme_minimal() +
-  labs(
-    title = "Paired total counts: run1 vs run2",
-    x = "Sequencing run",
-    y = "Total counts"
-  )
+  # Total counts plot
+  p_total <- ggplot(
+    qc_df,
+    aes(
+      x = run,
+      y = total_counts,
+      group = bio_sample
+    )
+  ) +
+    geom_line(alpha = 0.6) +
+    geom_point(size = 3) +
+    theme_minimal() +
+    labs(
+      title = paste0("Paired total counts: run1 vs ", run),
+      x = "Sequencing run",
+      y = "Total counts"
+    )
 
-ggplot(qc_df, aes(x = run, y = percent_mito, group = bio_sample)) +
-  geom_line(alpha = 0.6) +
-  geom_point(size = 3) +
-  theme_minimal() +
-  labs(
-    title = "Paired mitochondrial percentage: run1 vs run2",
-    x = "Sequencing run",
-    y = "Percent mitochondrial reads"
+  # Mitochondrial percentage plot
+  p_mito <- ggplot(
+    qc_df,
+    aes(
+      x = run,
+      y = percent_mito,
+      group = bio_sample
+    )
+  ) +
+    geom_line(alpha = 0.6) +
+    geom_point(size = 3) +
+    theme_minimal() +
+    labs(
+      title = paste0("Paired mitochondrial percentage: run1 vs ", run),
+      x = "Sequencing run",
+      y = "Percent mitochondrial reads"
+    )
+
+  # Return both plots
+  list(
+    total_counts = p_total,
+    percent_mito = p_mito,
+    qc_df = qc_df
   )
+}
+
+qc_run2 <- make_qc_plots(
+  countTable_filt = countTable_filt,
+  run = "run2"
+)
+
+qc_run3 <- make_qc_plots(
+  countTable_filt = countTable_filt,
+  run = "run3"
+)
+```
+
+```{r QC-plots}
+qc_run2$total_counts
+qc_run2$percent_mito
+qc_run3$total_counts
+qc_run3$percent_mito
 ```
 
 ## Step 6: Batch correction
 
 ```{r performe-batch-correction}
 # Check consitency between group info and samples
-samples <- colnames(countTable_final)
-intersect(samples, meta$svamp_ID)
-setdiff(samples, meta$svamp_ID)
+intersect(MOFA_samples, meta$svamp_ID)
+setdiff(MOFA_samples, meta$svamp_ID)
 
 gr <- c("0", "1-3", "4-5")
 
 meta_ <- meta %>%
-  filter(svamp_ID %in% samples) %>%
+  filter(svamp_ID %in% MOFA_samples) %>%
   mutate(Clin_gr = factor(.$"Clin_gr", levels = gr)) %>%
   mutate(
     `Clinical score (0-5)` = factor(
@@ -593,7 +974,7 @@ meta_ <- meta %>%
 
 design <- model.matrix(~Clin_gr, data = meta_)
 rownames(design) <- meta_$svamp_ID
-batch <- meta$batch
+batch <- meta_$batch
 
 # remove batch effect
 expr_corrected <- removeBatchEffect(
@@ -604,7 +985,7 @@ expr_corrected <- removeBatchEffect(
 ```
 
 ```{r plot-batch-correction}
-
+#| code-fold: true
 plot_pca <- function(X, title) {
   pca <- prcomp(t(X), scale. = TRUE)
 
@@ -633,15 +1014,15 @@ plot_pca(cpm_log_TMM[, rownames(design)], "before")
 ########################
 expr_corrected %>%
   as_tibble(., rownames = "symbol") %>%
+  right_join(ensembl_info, ., by = "symbol") %>%
   write_csv(., "../Results/MixOmic/Transcriptomics_batch_filt.csv")
 # expr_corrected <- read_csv("../Results/MixOmic/Transcriptomics_batch_filt.csv") %>% data.frame(., row.names = 1)
 ```
 
 ## Step 7: UMAP and clustering
-Unsupervised UMAP
-Not used right now, as I oved this code to the MOFA script 
+Unsupervised UMAP used for unsupervised clustering of transcriptomic samples.
+Not used right now, as I moved this code to the MOFA script 
 ```{r Paulos-UMAP}
-#| eval: false
 #### UMAP analysis ####
 v <- list(TRX = expr_corrected)
 set.seed(1)
@@ -690,28 +1071,31 @@ UMAP_df <- v %>%
 # BUILD GRAPH
 g2 <- igraph::graph_from_data_frame(
   data.frame(
-    from = rep(1:nrow(knn$TRX$idx), ncol(knn$TRX$idx)),
+    from = rep(
+      seq_len(nrow(knn$TRX$idx)),
+      ncol(knn$TRX$idx)
+    ),
     to = c(knn$TRX$idx),
-    weight = c(knn$TRX$dist)
+    weight = 1 - c(knn$TRX$dist)
   ),
-  directed = F
+  directed = FALSE
 )
 
 # IDENTIFY SAMPLE CLUSTERS
 set.seed(42)
 resolutions <- c(
-  `4` = 0.7,
-  `5` = 1.0,
-  `6` = 1.2,
-  `7` = 1.5,
-  `8` = 1.8
+  `4` = 0.6,
+  `5` = 0.8,
+  `6` = 0.9,
+  `7` = 1.1,
+  `8` = 1.2
 )
 
 for (i in names(resolutions)) {
   cl <- igraph::cluster_louvain(
     g2,
     resolution = resolutions[[i]],
-    weights = NA
+    weights = igraph::E(g2)$weight
   )
 
   UMAP_df$TRX[[paste0("trx_louvain_", i)]] <- factor(cl$membership)
@@ -719,7 +1103,9 @@ for (i in names(resolutions)) {
 ```
 
 ```{r UMAP-plotting-function}
-#| eval: false
+#| code-fold: true
+#| fig-width: 8
+#| fig-height: 8
 UMAP_fun <- function(
   umap_df,
   group_var,
@@ -744,7 +1130,7 @@ UMAP_fun <- function(
       aes(shape = if (!is.null(shape_gr)) .data[[shape_gr]] else NULL)
     ) +
     scale_colour_manual(
-      values = pal[[group_var]],
+      values = pal[["trx_louvain"]],
       name = "",
       aesthetics = c("colour", "fill")
     ) +
@@ -775,9 +1161,9 @@ UMAP_fun <- function(
     )
   return(p)
 }
-# quartz(width = 6, height = 6, dpi = 150)
-pal <- list(
-  trx_louvain_6 = c(
+# quartz(width = 8, height = 8, dpi = 150)
+pal <- c(pal,list(
+  trx_louvain = c(
     "#de9548",
     "#cc93cf",
     "#a5c97b",
@@ -787,9 +1173,12 @@ pal <- list(
     '#FB5273',
     "#984EA3",
     "#B3CDE3"
-  )
+  ))
 )
-UMAP_fun(UMAP_df$TRX, "trx_louvain_6", txt_var = "ID")
+n_clus <- c("trx_louvain_4", "trx_louvain_5", "trx_louvain_6", "trx_louvain_7")
+plots <- map(n_clus, ~UMAP_fun(UMAP_df$TRX, .x, txt_var = "ID")+ theme(legend.position = "none")) 
+plot_grid(plotlist = plots)
+
 select(
   UMAP_df$TRX,
   svamp_ID = "ID",
@@ -803,6 +1192,7 @@ select(
 ## Step 7: Differential Gene Expression analysis
 
 ```{r functions-old}
+#| code-fold: true
 ##################
 # DEG's FUNCTION #
 ##################
@@ -895,12 +1285,14 @@ edgR_dge.fun <- function(CountMatrix, gr, sample_df, confound = NULL) {
 
 # nesscary only if you want to add confounders
 # design <- model.matrix(~ Clin_gr + `Age (years)`, data = meta)
-
-dge <- column_to_rownames(countTable_final, var = "symbol") %>%
+dge <- countTable_final %>%
+  select(symbol, any_of(meta_$svamp_ID)) %>%
+  column_to_rownames(., var = "symbol") %>%
   edgR_dge.fun(., "RVVC_pos", meta_, confound = NULL)
 ```
 
 ```{r top-DEG}
+#| code-fold: true
 # get DEGs for RVVCpos groups
 
 fc_cols <- sort(grep("logFC", colnames(dge$top), value = TRUE))
@@ -953,10 +1345,10 @@ D[[3]] %>%
 # GET MATRIX #
 ###############
 # get DEGs for clin score 4-5
+# select all samples minus run2 and qc_run3
+smpls <- colnames(countTable_final)[grepl("S\\d\\d", colnames(countTable_final))]
 
-# get filter genes from normalized matrix
-# logFC.groupsRVVC
-deg_matrix <- cpm_log_TMM[DEG_list$logFC.RVVC_pos$Genes, meta_$svamp_ID]
+deg_matrix <- cpm_log_TMM[DEG_list$logFC.RVVC_pos$Genes, smpls]
 
 # use batch corrected expression values for heatmap?
 # deg_matrix <- expr_corrected[DEG_list[[names(D)[2]]]$Genes, meta$svamp_ID]
@@ -982,37 +1374,57 @@ colnames(zscore) <- colnames(deg_matrix)
 ```
 
 ```{r heatmap-annotation}
+#| code-fold: true
 ##############
 # ANNOTATION #
 ##############
-# colour pallets
-blue <- brewer.pal(6, name = "Blues") %>% c(., "gray")
-Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray")
-pal <- c("#f26386", "#fd814e", "#a4d984", "#fbbc52") # "#f588af", "#fd814e"
-pal2 <- c("#2266ac", "#91c5de")
-
-#Red <- brewer.pal(6, name = "Reds") #%>% c(., "gray")
-pal1 <- c("#ffa998", "#f17730ff", "#902267") #
-pal3 <- c("#9e8dec", "#cc93cf", "#a5c97b", "#de9548") #"#abcb4b" "#63d3b4" "#902267",
-
-
 # group information
-annot_col <- meta_ %>%
-  select(1:13, `Clinical score (0-5)`) %>%
-  mutate(across(2:ncol(.), ~ factor(.x)))
+cols <- c(
+  "Clin_gr",
+  "RVVC_pos",
+  "Clinical score (0-5)",
+  "CST",
+  "Fungal culture: C. albicans (y/n)"
+) %>%
+  set_names()
+# use if there are NAs:
+lvls <- map(cols, ~ c(sort(unique(meta[[.x]])), "na"))
 
-# check samples number
-dim(zscore)
-dim(annot_col)
+annot_df <- meta %>%
+  select(1, any_of(cols)) %>%
+  mutate(across(2:ncol(.), ~ factor(.x))) %>%
+  # when NAs are present:
+  #mutate(across(all_of(cols), ~ factor(.x, levels = lvls[[cur_column()]]))) %>%
+  column_to_rownames(var = "svamp_ID")
+
+# order samples acording to matrix
+annot_df <- annot_df[colnames(zscore), ]
+
+ann_colors <- map(colnames(annot_df), function(val) {
+  # Levels for this column
+  levs <- levels(annot_df[[val]])
+
+  # CASE 1: column exists in pal → use provided palette
+  if (val %in% names(pal)) {
+    colors <- pal[[val]]
+    return(set_names(colors[1:length(levs)], levs))
+  }
+  # CASE 2: column not in pal → generate paired palette
+  colors <- gg_color_hue(length(levs))
+  set_names(colors, levs)
+  # colors <- brewer.pal(length(levs), "Paired")
+  # if (length(levs) == length(colors)) {
+  #   set_names(colors, levs)
+  # } else {
+  #   set_names(colors[1:length(levs)], levs)
+  # }
+})
+# Name the list by column names
+ann_colors <- set_names(ann_colors, colnames(annot_df))
 
 # top annotation object:
 top_annot <- columnAnnotation(
-  bin_Clin = annot_col$Clin_gr, # binned clinical grade
-  Clin = annot_col$`Clinical score (0-5)`, # raw clinical score
-  Group_cross = annot_col$group_cross, # sample group
-  RVVC = annot_col$group, # sample group
-  hyphae = annot_col$hyphae, # sample group
-  RVVC_AS = annot_col$RVVC_AS, # sample group
+  df = annot_df,
 
   #show_legend = FALSE,
   show_annotation_name = T,
@@ -1026,14 +1438,7 @@ top_annot <- columnAnnotation(
   ),
   simple_anno_size = unit(.3, "cm"),
   #gap = unit(1, "cm"),
-  col = list(
-    Clin = set_names(Red, levels(annot_col$`Clinical score (0-5)`)),
-    bin_Clin = set_names(pal1, levels(annot_col$Clin_gr)),
-    Group_cross = set_names(pal3, levels(annot_col$group_cross)),
-    RVVC = set_names(pal2, levels(annot_col$RVVC)),
-    RVVC_AV = set_names(pal1, levels(annot_col$RVVC_AS)),
-    hyphae = set_names(pal, levels(annot_col$hyphae))
-  )
+  col = ann_colors
 )
 ```
 
@@ -1042,6 +1447,7 @@ top_annot <- columnAnnotation(
 #| fig-cap: "Figure 3: Histogram showing the distribution of z-score normalized matrix values"
 #| fig-width: 10
 #| fig-height: 5
+#| code-fold: true
 ################
 # PLOT HEATMAP #
 ################
@@ -1129,11 +1535,13 @@ H <- Heatmap(
   show_row_names = FALSE,
   show_column_names = TRUE,
   column_names_gp = grid::gpar(fontsize = 8),
+  use_raster = FALSE,
 
   # annotation
   # right_annotation = right_anno_row, left_annotation = left_anno_row,
   top_annotation = top_annot
 )
+# quartz(width = 13, height = 8, dpi = 120)
 H
 pdf(file = "./Heatmap_gene_expression.pdf", width = 10, height = 7)
 H
@@ -1143,7 +1551,7 @@ dev.off()
 ## Step 9: UMAP on signifcant genes
 
 ```{r UMAP}
-
+#| code-fold: true
 #### UMAP analysis ####
 set.seed(1)
 umap <- uwot::umap(
@@ -1158,16 +1566,11 @@ umap_df <- tibble(
   "UMAP 2" = umap[, 2],
   "ID" = rownames(umap)
 ) %>%
-  left_join(., annot_col, by = c("ID" = "svamp_ID"))
+  left_join(., meta, by = c("ID"="svamp_ID")) %>%
+  mutate(across(4:35, ~ factor(.x)))
 
 #### UMAP plotting by groups ####
-col <- c('#FB5273', "#6B51A3", "#9D9AC8", '#4FCEEF', "#e68633")
-col <- c('#FB5273', "#6B51A3", "#9D9AC8", '#4FCEEF', "#e68633", "#9e8dec")
-
-pal3 <- c("#9e8dec", "#cc93cf", "#a5c97b", "#de9548")
-
 txt_df <- umap_df %>%
-  select(1:16) %>%
   mutate(
     txt_clin = ifelse(
       grepl("0", umap_df$`Clinical score (0-5)`),
@@ -1175,10 +1578,10 @@ txt_df <- umap_df %>%
       as.character(.$`Clinical score (0-5)`)
     )
   ) %>%
-  mutate(txt_id = ifelse(RVVC == "RVVC", .$ID, NA))
+  mutate(txt_id = ifelse(RVVC_pos == "RVVC_pos", .$ID, NA), .after="ID")
 
 # save plot to file
-dev.new(height = 16.11, width = 16.11, units = "cm")
+# quartz(height = 6, width = 6)
 #ggsave(paste0("./Figures/09/", "Bulk_UMAP.png"), p)
 
 UMAP_fun <- function(group_var, txt_var) {
@@ -1188,28 +1591,35 @@ UMAP_fun <- function(group_var, txt_var) {
       x = `UMAP 1`,
       y = `UMAP 2`,
       fill = .data[[group_var]],
-      shape = Follow_up,
+      shape = `Fungal culture: C. albicans (y/n)`,
       color = .data[[group_var]]
     )
   ) +
     #geom_jitter( shape=21, size=3, color="white", width=.5, height=.5) +  # Tassos used jitter
     geom_point(size = 3, alpha = 1) +
     scale_colour_manual(
-      values = pal1,
+      values = pal[[group_var]],
       name = "",
       aesthetics = c("colour", "fill")
     ) +
-    scale_shape_manual(values = c(21, 5), name = "", ) + #specify individual shapes+
+    scale_shape_manual(values = c(21, 5), name = "C.a pos", ) + #specify individual shapes+
     geom_text(
       data = txt_df,
       aes(x = `UMAP 1`, y = `UMAP 2`, label = .data[[txt_var]]),
       size = 3,
       hjust = 0,
-      nudge_x = 0.07,
+      nudge_x = 0.09,
       color = "gray51"
     ) +
+    ggtitle(group_var) +
     theme_bw(base_size = 14) +
     theme(
+      plot.margin = unit(c(0, 0, 0, -0), "cm"),
+      legend.margin = margin(0, -0, -0, -0, unit = "cm"), # moves the legend box
+      legend.box.margin = margin(-0, -0, -0, -0, unit = "cm"), #t,r,b,l
+      legend.box.spacing = unit(0, "cm"), # space between plot and legend
+      legend.title = element_text(vjust = -1, size = 9),
+      plot.title = element_text(vjust = -1, size = 10),
       line = element_blank(),
       axis.ticks = element_line(color = "black"),
       aspect.ratio = 1,
@@ -1221,14 +1631,43 @@ UMAP_fun <- function(group_var, txt_var) {
 
 
 ```{r plot-UMAP}
-#| fig-width: 10
-#| fig-height: 7
+#| code-fold: true
+#| fig-width: 8
+#| fig-height: 8
+brighter_pastels <- c(
+  "#FF69B4", # hot pink
+  "#FFB6C1", # light pink
+  "#F4A460", # sandy peach
+  "#BA55D3", # orchid
+  "#87CEFA", # light blue
+  #"#98FB98", # mint green
+  "#EE82EE", # violet
+  # "#FDB462",
+  "#B3DE69",
+  #"#FCCDE5",
+  #"#D9D9D9"
+  "#BC80BD"
+) 
+clin_par <- colnames(umap_df)[grepl("Clinical score:", colnames(umap_df))]
+# add colours to pal
+pal <- c(pal,
+  set_names(map(
+      brighter_pastels[seq_along(clin_par)],
+      ~ c("#EAEAEA", .x)), clin_par)
+)
 
-pal1 <- c("#ffa998", "#902267", '#FB5273')
-UMAP_fun("RVVC_AS", "txt_id")
-UMAP_fun("RVVC_AS", "txt_clin")
-pal1 <- c("#ffa998", "#902267", '#FB5273', '#4FCEEF')
-UMAP_fun("hyphae", "txt_clin")
-pal1 <- c("#f26386", "#fd814e", "#a4d984", "#fbbc52")
-UMAP_fun("group_cross", "txt_clin")
+# quartz(height = 8, width = 8, dpi = 120)
+UMAP_fun("RVVC_pos", "txt_id")
+UMAP_fun("RVVC_pos", "txt_clin")
+UMAP_fun("CST", "txt_clin")
+```
+
+
+```{r}
+#| warning: false
+#| fig-width: 10
+#| fig-height: 15
+# quartz(width = 10, height = 15, dpi = 100)
+map(clin_par, ~UMAP_fun(.x, "txt_clin")) %>%
+  plot_grid(plotlist = ., ncol = 2)
 ```
