@@ -4,6 +4,7 @@ date: today
 date-format: "D MMM YYYY"
 format:
   html: 
+    theme: minty
     embed-resources: true
     toc: true
     toc-depth: 2
@@ -32,43 +33,52 @@ library(edgeR)
 library(cowplot)
 library(RColorBrewer)
 library(scales)
+library(ggrepel)
 select <- dplyr::select
 map <- purrr::map
+slice <- dplyr::slice
 
 # setwd("/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src")
 #################
 # COLOUR PALLET #
 #################
 pal <- c("#ffa998", "#e05e85", "#902267") # #e05e85, #f588af
-
 ```
-
-This is a good ressource to read about PLS-DA
-https://divingintogeneticsandgenomics.com/post/partial-least-square-regression-for-marker-gene-identification-in-scrnaseq-data/
 
 ## Overview: 
 #### Feature Selection Workflow for Multi-Omics Integration
-
-1. **Clean up data**  
+0. **Data delivery information**  
+   Information about delivery from Umeå metabolomics core facility
+1. **Format data**  
    Compile the data into appropriate format.
-
-2. **Remove QC samples**  
+2. **Exploratory QC**  
+   - QC reproducibility and low-abundance variability
+   - Instrument drift across run order
+   - Core-reported run-order correlations
+   - Internal-standard stability
+   - Sample-level signal patterns
+   - Log transformation: sensitivity analysis
+3. **Remove QC samples**  
    Filter QC samples.
-
-3. **Normalize**  
-   Use quntile normalization from limma package.
-
-4. **Plot unsupervised UMAPs**  
+4. **Normalize**  
+   Feature-wise scaling.
+5. **Plot unsupervised UMAPs**  
    Plot all metabolomics samples by UMAP across various meta data groups.
-
-5. **Plot shankey plot**  
+6. **Plot shankey plot**  
    Plot the relationship between samples for different meta data groups.
 
 
 ```{r pallets}
 #| code-fold: true
-
 pal <- list(
+    CST = c(
+    "I" = "#148F77",
+    "II" = "#6d9f06",
+    "III" = "#A3E4D7",
+    "IV-B" = "#E794C1",
+    "IV-C" = "#b5cb8c",
+    "V" = "#43BA8F"
+  ),
   subCST = c(
     "#a5c97b",
     "#cc93cf",
@@ -90,8 +100,6 @@ pal <- list(
   RVVC_pos = c(
     "#A6CEE3",
     "#1F78B4",
-    "#EAEAEA",
-    "gray",
     "#e490c4ff",
     "#c12d88ff"
   ), # "#FB9A99", "#E31A1C", "#B2DF8A", "#609c5bff", "#FDBF6F", "#FF7F00",, "#CAB2D6", "#6a3d9a" "#e490c4ff", "#c12d88ff"
@@ -137,15 +145,19 @@ pal <- list(
 #############
 # LOAD DATA #
 #############
-meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
-meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp_FINAL.xlsx"
-CST_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/Tidy_data/Metagenomics/Read_count_info_vaginalswab.csv"
-metab_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src/Paulo/results/microb_metab_clustering.csv"
-meta_data <- read_xlsx(meta_path, sheet = "Metadata")
-meta_groups <- read_csv("../Results/meta_int_groups.csv")
+# meta_path <- "/Users/vilkal/Downloads/Metadata_svamp.xlsx"
+# meta_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metadata_svamp_FINAL.xlsx"
 
-metab_clus <- read.csv(metab_path) %>% rename(svamp_ID = 1) %>% as_tibble()
-CST_info <- read_csv(CST_path) %>% dplyr::select(svamp_ID, CST, subCST)
+# metab_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/src/Paulo/results/microb_metab_clustering.csv"
+# meta_data <- read_xlsx(meta_path, sheet = "Metadata")
+# meta_groups <- read_csv("../Results/meta_int_groups.csv")
+
+comb_meta_path <- "../Results/Combined_gr_meta_data_all.csv"
+meta <- read_csv(comb_meta_path) %>%
+  #rename(svamp_ID = "sample") %>%
+  mutate(across(2:27, ~ factor(.x)))
+
+# metab_clus <- read.csv(metab_path) %>% rename(svamp_ID = 1) %>% as_tibble()
 
 matrix_data <- read_csv("../Tidy_data/Metabolomics/Metabolom_matrix.csv")
 metadata <- read_csv("../Tidy_data/Metabolomics/metabolomics_metadata.csv")
@@ -154,6 +166,75 @@ annotation_table <- read_csv(
 )
 ```
 
+## Data delivery information
+metabolomics methods info is on teams under Svampar - Margaux - Metabolomics and is called P0800_GCMS_Methods_Hymer_swabs. 
+
+### The methods describe:
+
+- Raw GC-MS acquisition
+- Peak deconvolution (MCR)
+- Alignment and annotation
+- Addition of isotope-labelled internal standards
+- Pooled QC samples
+
+Additionaly there is a ppt on the CMM server called UTF-8SMC_P0800_GCMS_Report.pptx that does some QC and initial analysis. It also describes in more detail the delivered data. 
+Bellow is a summary of the information:
+
+### Metabolomics data processing and QC — SMC notes
+
+#### Data processing
+- 148 secretion samples were successfully analysed by GC-TOF-MS.
+- 4 pooled QC samples were included.
+- 90 metabolic features were identified and putatively annotated.
+- One injection standard (MS; usually methyl stearate) and three internal standards (IS) were included for analytical monitoring.
+- GC-MS uses hard ionization, meaning that metabolites are measured through specific fragment ions rather than as a single signal representing the whole molecule.
+- GC-MS variables are typically **scaled to a maximum of 100** for relative-concentration analyses.
+- Because different metabolites have different ionization efficiencies, **relative metabolite values should not be summed to obtain a total metabolite concentration**.
+
+#### Normalization
+- Chemical normalization is generally **not recommended when RSD is below ~10%**.
+- Normalization is considered a trade-off between correcting one source of variation and potentially introducing another.
+- Internal standards are **not error-free** and may themselves be affected by ion suppression, co-elution, derivatization efficiency, etc.
+- If normalization using an internal standard is considered necessary, the recommendation is to use the **most stable internal standard (lowest RSD/CV)** as a global normalization factor.
+- Importantly, the internal standards were added **prior to analysis** and therefore capture variability introduced during the analytical process. They do **not account for variation introduced before analysis**, such as differences in the total amount of material collected per sample.
+- The injection standard was added **after derivatization** and is primarily useful for monitoring **instrumental/analytical drift**.
+
+#### QC and analytical quality
+- Overall, the dataset was assessed as having **good analytical quality**.
+- The most stable MS/IS showed an RSD slightly above 10%.
+- However, because the total amount of material in the secretion samples cannot be standardized, this variability was not considered evidence of substantial analytical variation.
+- The variability is likely partly **sampling-related**, meaning that normalization against the internal standards may not correct the main source of variation.
+- The QC samples can therefore be used primarily to assess **analytical drift and instrument stability**.
+
+#### PCA and sample variation
+
+- The PCA scores plot suggests that samples on the right side have **higher overall metabolite concentrations** than average.
+- This is supported by the right-skewed loadings distribution.
+- The samples should not automatically be considered strong outliers.
+  - They may represent genuine biological differences and may not substantially bias supervised approaches such as PLS, OPLS, LASSO, or ridge regression.
+  - **These potential outliers should therefore be tested for influence before deciding whether to remove or adjust them.**
+- There is no clear **binary separation between case and control** groups.
+- **Total-sum normalization or other approaches might improve group separation, but this has not been investigated.**
+
+![](../bin/Metabolomics QC PCA.png)
+
+#### Biological interpretation to investigate
+
+- Findings such as the example of **glyceric acid** require further investigation.
+- A possible explanation is that the case group produces more secretion than the controls, resulting in higher overall metabolite concentrations.
+- **This should be evaluated for biological plausibility before interpreting individual metabolite differences as disease-/case-related effects.**
+
+#### Overall take-home message
+
+- The dataset has **good analytical quality**, but substantial variation may arise from **sample collection/total material differences rather than the analytical process**.
+- Normalization should therefore **not be applied automatically**.
+- Before choosing a normalization strategy, investigate:
+  - QC/instrument drift;
+  - overall sample concentration differences;
+  - the influence of potential outliers;
+  - whether log transformation or other scaling improves the data;
+  - whether observed group differences are biologically plausible.
+
 ## Step 1. Preprocessing
 
 ### Cleaning up data
@@ -161,13 +242,13 @@ The metabolomic data was provided in a unformatted table, so compiling the data 
 ```{r Clean-up-originalmetabolom-file}
 #| code-fold: true
 #| eval: false
-
 #############
 # LOAD DATA #
 #############
 #---  Load sample info ----
 smpl_IDs <- read_xlsx("../data/svamp_ID_list.xlsx") %>%
-  select(svamp_ID, barcode_metabolomics)
+  select(svamp_ID, barcode_metabolomics) %>%
+  filter(!(is.na(barcode_metabolomics)))
 
 #---  Load raw file from metabolomics sequencing facility ----
 mbol_path <- "../data/Metabolomics/UTF-8SMC_P0800_GCMS_Data.xlsx"
@@ -193,9 +274,12 @@ row_boundary <- which(RAW[[1]] == "1")[1] - 1
 
 #--- 2. Split into three logical components ----
 # Sample metadata (left block, below header)
+info <- c("sampling time","FileName","Exp Time (string)","Runorder (minutes)")
 metadata <- RAW %>%
   slice((row_boundary + 1):n()) %>%
-  select(all_of(1:col_boundary))
+  select("barcode_metabolomics"="customer sample Identifier", all_of(info)) %>%
+  right_join(smpl_IDs,., by = "barcode_metabolomics") %>%
+  mutate(svamp_ID = ifelse(is.na(svamp_ID), str_extract(FileName, "QC\\d"), .$svamp_ID))
 
 # Compound annotations (top block, right side)
 annotations_raw <- RAW %>%
@@ -230,7 +314,7 @@ matrix_data <- RAW %>%
 # Extract selected annotation rows and pivot them into a tidy format
 annotation_table <- annotations_raw %>%
   #rename(row_label=`GCMS-NA@NA`) %>%
-  slice(., c(2:6)) %>% # rows with HMDB, KEGG, PubChem, Mz, Rt
+  slice(., c(1:9)) %>% # rows with HMDB, KEGG, PubChem, Mz, Rt
   pivot_longer(-1, names_to = "names", values_to = "value") %>%
   pivot_wider(names_from = "Compound Name", values_from = value) %>%
   # Create uniqe compound IDs by using M/z and Rt
@@ -244,8 +328,8 @@ annotation_table <- annotations_raw %>%
   )
 
 #--- 4. Remove quality control compunds ----
-annotation_table <- annotation_table %>%
-  filter(!grepl("Standard", .$names))
+# annotation_table <- annotation_table %>%
+#   filter(!grepl("Standard", .$names))
 
 # Results:
 # metadata         → sample metadata (e.g. sample ID, run order)
@@ -263,42 +347,376 @@ write_csv(
 )
 ```
 
+## Step 2. Exploratory QC
 
-```{r meta_info}
-metab_clus <- metab_clus %>%
-  select(svamp_ID, ends_with("_louvain")) %>%
-  mutate_at(., 2:ncol(.), factor)
+#### QC reproducibility and low-abundance variability
+```{r}
+#| fig-width: 10
+#| fig-height: 6
+#| code-fold: true
+# ============================================================
+# 1. QC reproducibility and low-abundance variability
+# ============================================================
+# QC RSD = SD / mean x 100. Lower values generally indicate
+# better repeatability. Four QC measurements give an uncertain
+# estimate, so use this as a screening diagnostic.
+internal_standards <- c(
+  "Injection Standard MS",
+  "Internal Standard IS02",
+  "Internal Standard IS06",
+  "Internal Standard IS10"
+)
 
-meta_data <- meta_data %>%
-  select(
-    svamp_ID,
-    38:42,
-    22,
-    24:25,
-    54,
-    starts_with("Clinical score")
+m <- matrix_data %>%
+  mutate(
+    QC_mean = rowMeans(pick(QC1:QC4), na.rm = TRUE),
+    QC_SD = apply(pick(QC1:QC4), 1, sd, na.rm = TRUE),
+    QC_RSD = QC_SD / QC_mean * 100,
+    compound_type = if_else(
+      Compund %in% internal_standards,
+      "Internal standard",
+      "Other compound")
+  ) %>%
+  select(Compund, QC1:QC4, QC_mean, QC_SD, QC_RSD, compound_type) %>%
+  left_join(
+    annotation_table %>% select(names, `RSD (%, QCs)`),
+    by = c("Compund" = "names")
   )
 
-meta <- meta_groups %>%
-  #mutate(svamp_ID = str_replace(svamp_ID, "S75_Bl", "S75_BL")) %>%
-  #dplyr::rename(sample = "svamp_ID") %>%
-  left_join(CST_info, by = "svamp_ID") %>%
-  left_join(metab_clus, by = "svamp_ID") %>%
-  #left_join(trx_mapping, by = "sample") %>%
-  mutate(
-    Lacto = ifelse(
-      CST == "I",
-      "Lacto_c",
-      ifelse(CST == "III", "Lacto_i", "other")
-    )
-  ) %>%
+# quartz(width = 10, height = 6, dpi = 120)
+ggplot(m, aes(x = QC_mean, y = QC_RSD, colour = compound_type)) +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_text_repel(
+    data = filter(m, QC_RSD > 100),
+    aes(label = Compund),
+    show.legend = FALSE,
+    max.overlaps = Inf,
+    size = 3
+  ) +
+  geom_hline(yintercept = 10, linetype = 2, colour = "orange") +
+  geom_hline(yintercept = 20, linetype = 2, colour = "red") +
+   scale_x_log10(
+    breaks = c(1, 10, 20, 50, 100)
+    # breaks = c(0.1, 1, 10, 100),
+    # labels = scales::label_number()
+    ) +
+  scale_colour_manual(
+    values = c(
+      "Other compound" = "grey60",
+      "Internal standard" = "#0072B2")
+  ) +
+  labs(
+    title = "QC reproducibility versus mean QC intensity",
+    subtitle = "Labels: QC RSD > 100%; dashed lines: 10% and 20% QC RSD",
+    x = "Mean QC intensity (log scale)",
+    y = "QC RSD (%)",
+    colour = NULL
+  ) +
+  theme_bw()
+```
+(the breaks on the x-axis actualy show non loged values, but the scale has been loged for visualization purposes)
 
-  left_join(meta_data, by = "svamp_ID") %>%
-  rename_with(~ gsub(" ", "_", .x)) %>%
-  mutate("Clinical_score_(0-5)" = as.character(`Clinical_score_(0-5)`))
+The pooled quality-control (QC) samples were created by combining sample remnants after aliquoting, providing a pooled sample for assessing analytical reproducibility across the GC-TOF-MS run. The relative standard deviation (RSD) is calculated as the standard deviation divided by the mean intensity, expressed as a percentage. A lower QC RSD indicates more consistent measurements, whereas a higher RSD indicates greater variability between QC injections. The plot shows QC RSD against mean QC intensity to investigate whether variability is associated with signal abundance. Features with high QC RSD, particularly those with low intensity, may have less reliable measurements and should be investigated before downstream analysis. Reference lines at 10% and 20% RSD provide rough guides rather than strict pass/fail thresholds. Because only four pooled QC measurements are available, RSD estimates should be interpreted cautiously.
+
+As the internal standards have relatively low QC RSD values and high intensities, this suggests that their measurements are reasonably reproducible and that the analytical system shows acceptable stability for these compounds. However, this does not necessarily indicate that all metabolites are measured reliably, nor does it rule out sample-specific variability or run-order effects. Since the internal standards were added before analysis, they also do not capture variability introduced during sample collection and aliquoting.
+
+```{r}
+# RDS stats:
+summary(set_names(m$QC_RSD, m$Compund))
+
+# check whether one QC is consistently higher than the others:
+colMeans(m[,2:5], na.rm = TRUE)
+
+# Check the correlations between the QCs:
+cor(m[,2:5], use = "pairwise.complete.obs")
+```
+Interpretation:
+
+    25% of metabolites have QC RSD < 16.9%
+    50% have QC RSD < 30.8%
+    75% have QC RSD < 48.7%
+Some metabolites have extremely poor reproducibility (RDS up to 200%)
+
+Correlations between QC samples were high (r = 0.78–0.99), indicating consistent overall metabolite profiles. However, QC1 showed systematically higher signal intensities than QC2–QC4. 
+
+suggest that:\
+- The metabolite profiles are very similar.
+- QC1 has a systematically higher intensity level.
+- QC2-QC4 look almost identical.
+
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+#| code-fold: true
+# ============================================================
+# 2. Zeros and missing values
+# ============================================================
+# High zero fractions may indicate limited detection or sparse
+# measurements. A zero is not necessarily a true non-detection.
+
+# quartz(width = 6, height = 4, dpi = 120)
+matrix_data %>%
+  pivot_longer(
+    cols = -c(Compund, QC1, QC2, QC3, QC4),
+    names_to = "sample",
+    values_to = "intensity"
+  ) %>%
+  group_by(Compund) %>%
+  summarise(
+    zero_pct = mean(intensity == 0, na.rm = TRUE) * 100,
+    missing_pct = mean(is.na(intensity)) * 100,
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    c(zero_pct, missing_pct),
+    names_to = "measure",
+    values_to = "percent"
+  ) %>%
+  ggplot(aes(percent)) +
+  geom_histogram(bins = 30, color = "white") +
+  facet_wrap(~ measure, scales = "free_y") +
+  labs(
+    title = "Distribution of zeros and missing values",
+    x = "Percentage of biological samples",
+    y = "Number of metabolites"
+  ) +
+  theme_bw()
+
+```
+This plot shows the distribution of zero and missing values across metabolites in the biological samples. A high proportion of zeros may indicate low-abundance metabolites, values below the detection or reporting threshold, or other data-processing effects; zero does not necessarily mean that a metabolite was absent. Missing values may arise for different reasons and should be distinguished from zeros. Features with many zeros or missing values should be investigated, as they may affect downstream statistical analyses and decisions about filtering or imputation.
+
+There are no missing values in this dataset and maybe just one metabolite have 0 in more than 50% of samples
+
+
+#### QC: Instrument drift across run order
+
+```{r QC-drift}
+#| fig-width: 6
+#| fig-height: 3
+#| code-fold: true
+# ============================================================
+# 3. QC run-order effects
+# ============================================================
+# Uses the run-order positions in metadata for QC1-QC4.
+# Trends suggest possible drift but four points are not enough
+# to establish a reliable correction curve.
+
+# QC drift: pooled QC intensity vs acquisition run order
+plot_qc_runorder <- function(data, compounds, plot_title) {
+  data %>%
+    filter(Compund %in% compounds) %>%
+    ggplot(aes(`Runorder (h)`, intensity, group = Compund)) +
+    geom_line(alpha = 0.25) +
+    geom_point() +
+    facet_wrap(~ Compund, scales = "free_y", ncol = 6) +
+    labs(
+      title = plot_title,
+      x = "Run order (hours)",
+      y = "Intensity"
+    ) +
+    theme_bw() +
+    theme(strip.text = element_text(size = 7))
+}
+
+qc_data <- matrix_data %>%
+  pivot_longer(-Compund, names_to = "svamp_ID", values_to = "intensity") %>%
+  filter(str_detect(svamp_ID, "^QC[1-4]$")) %>%
+  left_join(
+    metadata %>% select(svamp_ID, `Runorder (minutes)`),
+    by = "svamp_ID"
+  ) %>%
+  mutate(`Runorder (h)` = `Runorder (minutes)` / 60)
+
+p_other <- plot_qc_runorder(
+  qc_data,
+  setdiff(unique(qc_data$Compund), internal_standards),
+  "Pooled QC intensities — other compounds"
+)
+
+p_internal <- plot_qc_runorder(
+  qc_data,
+  internal_standards,
+  "Pooled QC intensities — internal standards"
+)
+# quartz(width = 6, height = 3, dpi = 120)
+p_internal
 ```
 
-## Step 2: Remove QC samples
+```{r}
+#| fig-width: 10
+#| fig-height: 15
+# quartz(width = 10, height = 15, dpi = 120)
+p_other
+```
+
+These plots show the measured intensities of pooled quality-control (QC) samples across the GC-TOF-MS acquisition run. Because pooled QCs represent a consistent sample composition, systematic changes in their measured intensities can indicate analytical variability, such as changes in instrument sensitivity over time.
+
+What to look for:
+
+  - Stable intensities: Values remain relatively consistent across the run, suggesting good analytical stability.
+  - Consistent increase or decrease: May indicate instrument drift, such as changing detector sensitivity or instrument response.
+  - Sudden changes: May indicate an acquisition or instrument issue affecting measurements around that point in the run.
+  - Feature-specific trends: If only certain metabolites show drift, the effect may be compound-specific rather than a global instrument problem.
+  - High variability between QC injections: May indicate limited analytical reproducibility, although individual measurements and the small number of QC samples should be considered.
+
+Interpretation: A trend in QC intensities suggests possible analytical drift, but does not by itself establish its cause or justify correction. With only four QC measurements, trend estimates are uncertain. These plots should therefore be interpreted alongside the QC relative standard deviations (RSDs), internal-standard behavior, and the core's reported run-order correlations. Any drift correction should be considered only after evaluating the evidence and its potential effect on biological differences.
+
+#### Core-reported run-order correlations
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+#| code-fold: true
+# Also inspect the core's reported run-order correlations.
+# Large absolute correlations are flags for investigation,
+# not automatic reasons to remove a feature.
+
+annotation_table %>%
+  mutate(
+    runorder_corr = readr::parse_number(as.character(`Corr. Runorder`))
+  ) %>%
+  ggplot(aes(runorder_corr)) +
+  geom_histogram(
+    breaks = seq(-1, 1, by = 0.1),
+    color = "white"
+  ) +
+  geom_vline(xintercept = c(-0.5, 0.5), linetype = 2) +
+  labs(
+    title = "Core-reported run-order correlations",
+    x = "Correlation with run order",
+    y = "Number of features"
+  ) +
+  theme_bw()
+```
+
+This plot shows the distribution of correlations between metabolite intensities and analytical run order, as reported by the metabolomics core. Correlations close to zero indicate little linear association with run order, whereas strong positive or negative correlations may indicate systematic changes in signal during the analytical run, potentially reflecting instrument drift. Features with absolute correlations above 0.5 are flagged for further investigation, rather than automatically excluded or corrected. These associations should be interpreted alongside QC reproducibility and the pooled QC intensity plots, as run-order correlations alone cannot establish the cause of the observed trends.
+
+#### Internal-standard stability
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+#| code-fold: true
+# ============================================================
+# 4. Internal-standard stability
+# ============================================================
+# Compare the core-reported QC RSDs for internal standards.
+# The injection standard is shown for context, not treated
+# as an internal standard for normalization.
+
+annotation_table %>%
+  filter(str_detect(names, regex("internal|injection", ignore_case = TRUE))) %>%
+  ggplot(aes(
+    x = reorder(names, `RSD (%, QCs)`),
+    y = `RSD (%, QCs)`,
+    fill = str_detect(names, regex("injection", ignore_case = TRUE))
+  )) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Standard reproducibility in pooled QCs",
+    x = NULL,
+    y = "Core-reported QC RSD (%)",
+    fill = "Injection standard"
+  ) +
+  theme_bw()
+
+```
+
+This plot compares the relative standard deviations (RSDs) of the internal standards and injection standard in the pooled QC samples. Lower QC RSD indicates more consistent measurements across QC injections, suggesting better analytical reproducibility for that standard. The most stable internal standard may be a candidate for normalization, but this should not be decided based on RSD alone. Internal standards were added before analysis and therefore do not capture variability introduced during sample collection or aliquoting. The injection standard, added after derivatization, is primarily useful for monitoring instrument-related variability. Any normalization strategy should be justified by the observed data and its potential impact on biological differences.
+
+#### Sample-level signal patterns
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+#| code-fold: true
+# ============================================================
+# 5. Sample-level signal patterns
+# ============================================================
+# Total signal is a diagnostic for broad sample differences,
+# NOT a biologically meaningful total concentration and NOT
+# an automatic normalization factor.
+
+matrix_data %>%
+  pivot_longer(
+    cols = -c(Compund, QC1, QC2, QC3, QC4),
+    names_to = "svamp_ID",
+    values_to = "intensity"
+  ) %>%
+  group_by(svamp_ID) %>%
+  summarise(
+    median_intensity = median(intensity, na.rm = TRUE),
+    total_signal = sum(intensity, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    c(median_intensity, total_signal),
+    names_to = "measure",
+    values_to = "value"
+  ) %>%
+  ggplot(aes(value)) +
+  geom_histogram(bins = 30, color = "white") +
+  facet_wrap(~ measure, scales = "free") +
+  labs(
+    title = "Distribution of sample-level signal",
+    x = "Signal summary",
+    y = "Number of samples"
+  ) +
+  theme_bw()
+
+```
+These plots show the distribution of median intensity and total signal across biological samples to identify differences in overall signal abundance. Samples with unusually high or low values may reflect differences in sample amount, biological variation, or analytical variability. However, because metabolite intensities are relative and may differ in ionization efficiency, total signal should be treated as a diagnostic rather than a measure of total metabolite concentration. Samples with unusual signal patterns should be investigated alongside metadata and PCA results before considering any normalization or outlier handling.
+
+#### Log transformation: sensitivity analysis
+
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+#| code-fold: true
+# ============================================================
+# 6. Log transformation: sensitivity analysis
+# ============================================================
+# This compares distributions only. Decide whether to log-transform
+# by comparing downstream statistical results with and without it.
+# log1p is illustrative; choose a transformation appropriate to
+# the data and apply it consistently.
+
+matrix_data %>%
+  select(-QC1, -QC2, -QC3, -QC4, -Compund) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "svamp_ID",
+    values_to = "intensity"
+  ) %>%
+  mutate(
+    transformation = "Original",
+    transformed = intensity
+  ) %>%
+  bind_rows(
+    matrix_data %>%
+      select(-QC1, -QC2, -QC3, -QC4, -Compund) %>%
+      pivot_longer(
+        cols = everything(),
+        names_to = "svamp_ID",
+        values_to = "intensity"
+      ) %>%
+      mutate(
+        transformation = "log1p",
+        transformed = log1p(intensity)
+      )
+  ) %>%
+  ggplot(aes(transformed)) +
+  geom_histogram(bins = 40, color = "white") +
+  facet_wrap(~ transformation, scales = "free") +
+  labs(
+    title = "Intensity distributions before and after log1p",
+    x = "Transformed intensity",
+    y = "Number of measurements"
+  ) +
+  theme_bw()
+```
+
+This plot compares the distribution of metabolite intensities before and after log transformation. Log transformation compresses high values and can reduce right-skewness, potentially making the data more suitable for some statistical methods. However, it does not necessarily improve the data or remove outliers. The plot helps assess how the transformation changes the intensity distribution; its usefulness should ultimately be evaluated by comparing downstream statistical results with and without transformation. Since the data are already scaled to 0–100, the transformation and any pseudocount should be chosen deliberately and applied consistently.
+
+## Step 4: Remove QC samples
 
 ### Filter samples
 ```{r filter-samples}
@@ -311,22 +729,153 @@ data <- matrix_data %>%
   # remove controll samples
   select(-starts_with("QC"))
 
+##################
+# SELECT SAMPLES #
+##################
+# before taxa filtering we select the MOFA selected samples
+m <- read_csv("../Results/Sample_omic_table.csv")
+data <- data %>%
+  select(Compund, any_of(m$sample[m$at_least_two & m$all_BL]))
+
+n_samples <- select(data, starts_with("S")) %>% ncol() # number of good samples
+n_samples
+
+
 # transforme to matrix
-matrix <- data %>%
+mat <- data %>%
   column_to_rownames(var = "Compund") %>%
   as.matrix(.)
-
 ```
 
-## Step 3: Normalize data
+```{r distribution}
+ggplot(
+  tibble(value = c(mat)),
+  aes(x = value)
+) +
+  #geom_density(alpha = 0.2) +
+  geom_histogram(alpha = 0.8, bins = 150, fill = "#F8766D", col = "white") +
+  theme_bw() +
+  labs(
+    x = "Value",
+    y = "Density",
+    title = "Distribution of metabolomics data during preprocessing"
+  )
+```
+ From this histogram, it is not automatically edident that you would want to log-transform.
+
+What we can see:
+
+- A very strong peak close to 0.
+- A long right tail extending to 100.
+- A pile-up at exactly 100, which is consistent with your earlier observation that many metabolites have been scaled to a maximum of 100.
+- The distribution is clearly right-skewed, but this skewness is at least partly a consequence of the vendor's scaling procedure.
+
+The important thing is that this histogram is pooling all metabolites and all samples together. Because each metabolite have been independently scaled, the overall distribution is somewhat artificial and not directly comparable to a typical raw GC-MS intensity distribution.
+
+
+```{r}
+mat_scale <- t(scale(t(mat)))
+
+mat_log_scale <- mat |>
+  log1p() |>
+  t() |>
+  scale() |>
+  t()
+
+pca_scale <- prcomp(t(mat_scale))
+pca_log_scale <- prcomp(t(mat_log_scale))
+```
+
+
+## Step 5: Normalize data
 ```{r Normalize-data}
 # Normalize data
-##################
-# NORMALIZE DATA #
-##################
-# samples should be columns and features rows
-norm <- normalizeQuantiles(log1p(matrix))
 
+# Features in rows, samples in columns
+
+# ---------------------------
+# Remove metabolites with
+# little variation
+# ---------------------------
+keep <- apply(mat, 1, sd, na.rm = TRUE) > 0
+# No metabolites to remove:
+keep[isFALSE(keep)]
+matrix <- mat[keep, ]
+
+# ---------------------------
+# Log transform
+# ---------------------------
+# matrix <- log1p(matrix)
+
+# ---------------------------
+# Scale metabolites
+# (recommended for MOFA)
+# ---------------------------
+matrix <- t(scale(t(matrix)))
+
+# Remove metabolites that
+# become NA after scaling (no metabolites became NA)
+matrix <- matrix[complete.cases(matrix), ]
+
+# ---------------------------
+# Check dimensions
+# ---------------------------
+dim(matrix)
+
+# rows = metabolites
+# columns = samples
+```
+
+```{r plotting-distribution}
+#| fig-width: 8
+#| fig-height: 5
+# Assuming rows = metabolites, columns = samples
+
+# Log transform
+mat_log <- log10(mat + 1)
+
+# scaled only
+mat_scaled_only <- t(scale(t(mat)))
+
+# Scale each metabolite (row)
+mat_scaled <- t(scale(t(mat_log)))
+
+# Combine for plotting
+plot_df <- bind_rows(
+  tibble(value = c(mat), stage = "Raw"),
+  tibble(value = c(mat_scaled_only), stage = "Scaled only"),
+  tibble(value = c(mat_log), stage = "Log10"),
+  tibble(value = c(mat_scaled), stage = "Scaled + log10")
+) %>%
+  mutate(line_col = ifelse(value == 0, "zero", .$stage))
+
+# Density plot
+# quartz(width = 8, height = 4, dpi = 120)
+ggplot(plot_df, aes(x = value, fill = stage)) +
+  geom_histogram(alpha = 0.8, bins = 150, colour = "white") +
+  theme_minimal() +
+  coord_cartesian(expand = F) +
+  labs(
+    x = "Value",
+    y = "counts",
+    title = "Distribution of metabolomics data during preprocessing"
+  ) +
+  facet_wrap(~stage, ncol = 1, scale = "free_y")
+
+ggplot(
+  plot_df %>% filter(stage == "Scaled only"),
+  aes(x = value, colour = stage, fill = stage)
+) +
+  geom_density(alpha = 0.2) +
+  theme_bw() +
+  labs(
+    x = "Value",
+    y = "Density",
+    title = "Distribution of metabolomics data during preprocessing"
+  )
+```
+
+```{r mixOmic-format}
 # Transpose for mixOmic analysis
 matrix.t <- matrix %>%
   t()
@@ -341,38 +890,36 @@ samples as rows and features as columns, thus the transformation is VERY importa
 ########################
 # SAVE NORMALIZED DATA #
 ########################
-norm %>%
-  as_tibble(., rownames = "svamp_ID") %>%
+matrix %>%
+  as_tibble(., rownames = "Metabolite") %>%
+  {
+    . ->> norm_df
+  } %>%
   write_csv(., "../Results/MixOmic/Metabolom_Normalized.csv")
-# norm <- read_csv("../Results/MixOmic/Metabolom_Normalized.csv")
+# norm_df <- read_csv("../Results/MixOmic/Metabolom_Normalized.csv")
 ```
 
-## Step 4: UMAP 
+## Step 6: UMAP 
 
 ```{r UMAP}
-
 #### UMAP analysis ####
 set.seed(1)
 umap <- uwot::umap(
-  t(norm),
+  t(matrix),
   n_neighbors = 15,
   init = "spectral",
   scale = T,
   seed = 1234
 )
 
-# group information
-annot_col <- meta %>%
-  filter(svamp_ID %in% colnames(norm)) %>%
-  # select(-`Age (years)`) %>%
-  mutate(across(2:7, ~ factor(.x)))
-
+# add group information
 umap_df <- tibble(
   "UMAP 1" = umap[, 1],
   "UMAP 2" = umap[, 2],
   "ID" = rownames(umap)
 ) %>%
-  left_join(., annot_col, by = c("ID" = "svamp_ID"))
+  left_join(., meta, by = c("ID" = "svamp_ID")) %>%
+  mutate(across(4:35, ~ factor(.x)))
 
 #### UMAP plotting by groups ####
 txt_df <- umap_df %>%
@@ -418,15 +965,22 @@ UMAP_fun <- function(group_var, txt_var, shape_gr = NULL, shape = NULL) {
     } +
     # scale_shape_manual(values = c(21, 5, 4), name = "" ) + #specify individual shapes+
     geom_text(
-      data = txt_df,
+      data = txt_df, inherit.aes = FALSE,
       aes(x = `UMAP 1`, y = `UMAP 2`, label = .data[[txt_var]]),
       size = 3,
       hjust = 0,
       nudge_x = 0.07,
       color = "gray51"
     ) +
+    ggtitle(group_var) +
     theme_bw(base_size = 14) +
     theme(
+      plot.margin = unit(c(0, 0, 0, -0), "cm"),
+      legend.margin = margin(0, -0, -0, -0, unit = "cm"), # moves the legend box
+      legend.box.margin = margin(-0, -0, -0, -0, unit = "cm"), #t,r,b,l
+      legend.box.spacing = unit(0, "cm"), # space between plot and legend
+      legend.title = element_text(vjust = -1, size = 9),
+      plot.title = element_text(vjust = -1, size = 10),
       line = element_blank(),
       axis.ticks = element_line(color = "black"),
       aspect.ratio = 1,
@@ -434,38 +988,74 @@ UMAP_fun <- function(group_var, txt_var, shape_gr = NULL, shape = NULL) {
     )
   return(p)
 }
-
 ```
 
 
 ```{r plot-UMAP}
 #| fig-width: 10
 #| fig-height: 7
-
 # shapes: c( "x", "dimond", "circle")
 s <- c(4, 5, 21)
 
-UMAP_fun("RVVC_AS", "txt_id", shape = NULL)
-
-UMAP_fun("RVVC_AS", "txt_clin", shape_gr = "RVVC_AS", shape = s)
-
+UMAP_fun("RVVC_pos", "txt_id", shape = NULL)
+UMAP_fun("RVVC_pos", "txt_clin", shape_gr = "pos", shape = s)
 UMAP_fun("microb_louvain", "txt_clin")
-
 UMAP_fun("integ_louvain", "txt_clin")
-
 UMAP_fun("metab_louvain", "txt_clin")
-
 ```
 
-## Step 5: Shankey plot
+```{r plot-UMAP-clin}
+#| code-fold: true
+#| fig-width: 8
+#| fig-height: 8
+brighter_pastels <- c(
+  "#FF69B4", # hot pink
+  "#FFB6C1", # light pink
+  "#F4A460", # sandy peach
+  "#BA55D3", # orchid
+  "#87CEFA", # light blue
+  #"#98FB98", # mint green
+  "#EE82EE", # violet
+  # "#FDB462",
+  "#B3DE69",
+  #"#FCCDE5",
+  #"#D9D9D9"
+  "#BC80BD"
+) 
+clin_par <- colnames(umap_df)[grepl("Clinical score:", colnames(umap_df))]
+# add colours to pal
+pal <- c(pal,
+  set_names(map(
+      brighter_pastels[seq_along(clin_par)],
+      ~ c("#EAEAEA", .x)), clin_par)
+)
+
+# quartz(height = 8, width = 8, dpi = 120)
+UMAP_fun("RVVC_pos", "txt_id")
+UMAP_fun("RVVC_pos", "txt_clin")
+UMAP_fun("CST", "txt_clin")
+```
+
+```{r}
+#| warning: false
+#| fig-width: 10
+#| fig-height: 15
+# quartz(width = 10, height = 15, dpi = 100)
+map(clin_par, ~UMAP_fun(.x, "txt_clin")) %>%
+  plot_grid(plotlist = ., ncol = 2)
+```
+
+## Step 6: Shankey plot
 
 ```{r shankey-plot}
 #| fig-width: 5.25
 #| fig-height: 5.25
+#| eval: false
+# remotes::install_github("czarnewski/niceRplots")
 library(niceRplots)
 
 plot_meta_sankey <- function(
-  vars = c("integ_louvain", "RVVC_AS"),
+  vars = c("integ_louvain", "RVVC_pos"),
   palette = pal1,
   drop_na = TRUE,
   return_pdf = TRUE,
