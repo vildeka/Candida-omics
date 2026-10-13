@@ -57,6 +57,7 @@ This repository will bring together multiple omics layers generated from the sam
 1. [01_Figure](https://vildeka.github.io/Candida-omics/Figure1)
 2. [02_Figure](https://vildeka.github.io/Candida-omics/Figure2)
 3. [03_Figure](https://vildeka.github.io/Candida-omics/Figure3)
+5. [05_Figure](https://vildeka.github.io/Candida-omics/Figure5)
 
 ### Supplementary Figures
 1. [S01_Figure](https://vildeka.github.io/Candida-omics/FigureS1)
