@@ -83,9 +83,10 @@ write_csv(gr_data, "../Tidy_data/Asigned_groups_info_all_samples.csv")
 ## Format transcriptomics data
 
 Steps performed bellow:
-1. Combine all transcriptomics related information into one mapping file for all three runs
-2. Merge datasets
-3. Annotate (add symbols) for all datasets using Ensembl 113
+1. Sum BEA23P074 run1 and run2 files
+2. Combine all transcriptomics related information into one mapping file for all three runs
+3. Merge datasets
+4. Annotate (add symbols) for all datasets using Ensembl 113
 
 The two first sequencing runs were orginaly referenced against version 101 of the Ensembl reference genome.
 However, after writing to Tassos, he re-generated the counts files for the first two runs from the new (113) reference.
@@ -121,16 +122,23 @@ I have now updated F.Fagerstrom_24_07_sample_info.txt with the correct informati
 # LOAD LIBRARIES #
 ##################
 library(tidyverse)
+# BiocManager::install("biomaRt")
+# BiocManager::install("org.Hs.eg.db")
 library(biomaRt)
-library(org.Hs.eg.db)
-library(AnnotationDbi)
+#library(org.Hs.eg.db)
+#library(AnnotationDbi)
+
+select <- dplyr::select
+map <- purrr::map
+rename <- dplyr::rename
 
 #############################
 # 1. Load count data #
 #############################
 input_dir <- "../data/Transcriptomics/"
+# we load both rounds of the BEA23P074 samples later:
+# they hav been run in two rounds to increase sequencing depth, so we need to sum them
 files <- c(
-  counts_23P074 = "BEA23P074run2_subreadCounts_hg38ens_minus_frag.txt",
   counts_24P003 = "BEA24P003_subreadCounts_hg38ens_minus_frag.txt",
   counts_26P064 = "BEA26P064_subreadCounts_hg38ens_minus_frag.txt"
 )
@@ -155,21 +163,192 @@ smpl_IDs <- read_xlsx(
 )
 
 mapping_id <- c(
-  BEA23P074run2 = "23",
+  BEA23P074 = "23",
   BEA24P003 = "24_07",
   BEA26P064 = "26_31"
 ) %>%
   map(., ~ read_tsv(paste0(input_dir, "F.Fagerstrom_", .x, "_sample_info.txt")))
 
-# we choose the second round of the BEA23P074 samples:
-mapping <- c("BEA23P074run2", "BEA24P003", "BEA26P064") %>%
+mapping <- c("BEA24P003", "BEA26P064") %>%
   set_names() %>%
-  map(., ~ read_tsv(paste0(input_dir, .x, "_mapping.txt"))) %>%
-  bind_rows() %>%
-  mutate(`NGI ID` = str_extract(File, "^[^_]+_[^_]+"), .after = "File")
+  map(., ~ read_tsv(paste0(input_dir, .x, "_mapping.txt"))) #%>%
+  #bind_rows() %>%
+  #mutate(`NGI ID` = str_extract(File, "^[^_]+_[^_]+"), .after = "File")
 ```
 
-### Step 1. Combine all transcriptomics related information
+NB!
+DNA and RNA extractions for BEA23P074:
+There are 2 re-extracted samples that have overlapping BEA ID (BEA23P074_38 and BEA23P074_39) 
+(RNA: S11 and s18 while DNA S02 and S03) despite representing different samples. This is because two were re-extracted for RNA and the other two for DNA and got assigned the next running number separately for each extraction. 
+```{r}
+Combined <- read_xlsx(
+  "../Tidy_data/Transcriptomics/BEA_Extraction_RNA_DNA_QC.xlsx",
+  skip = 1, sheet = "Combined",
+  na = "NA"
+) %>%
+  mutate(
+    Batch = str_extract(`BEA ID`, "^[^_]+"), .after="ID") %>%
+  mutate(across(c(`DNA Conc [ng/ul] Nanodrop`, `Total amount DNA [ng]`), as.double))
+
+ggplot(Combined, aes(x = Batch, y = `Total amount DNA [ng]`)) +
+  geom_boxplot(
+    aes(group = Batch),
+    width = 0.6,
+    outlier.shape = NA,
+    alpha = 0.3
+  ) +
+  geom_jitter(
+    width = 0.15,
+    size = 2.5,
+    alpha = 0.8
+  ) +
+  labs(
+    x = "Batch",
+    y = "DNA concentration (ng/µL)",
+    title = "DNA concentration across batches"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.x = element_blank()
+  )
+
+
+```
+
+### Step 1. Sum run1 and run2 counts for BEA23P074
+
+### Background
+The project `BEA23P074` contains two count files (`run1` and `run2`) generated from the same samples. To determine whether these runs had already been combined in the previously processed count matrix (`Counts_23P074_101.csv`), the raw counts from `run1` and `run2` were summed and compared to the counts in the processed file.
+
+The comparison showed that:
+
+```{r check-old-count-tables}
+#| code-fold: true
+# read files
+CMM_path <- "/Volumes/home/Groups/Kristina Broliden Group (0e9ceeed)/Svamp_raw_data/Transcriptomics/original BEA files/Counts/"
+files <- c("run1" = 1, "run2" = 2)
+run <- map(files,~read.delim(
+  paste0(CMM_path, "BEA23P074run",.x,"_subreadCounts_hg38ens_minus_frag_101.txt"),
+  comment.char = "#"
+))
+old <- read_csv(paste0(CMM_path, "Counts_23P074_101.csv"))
+
+sample_col <- names(old)[9]   # replace if needed
+
+cmp <- tibble(
+  ensembl = run$run1$Geneid,
+  run1 = run$run1[["P30007_1002"]],     # adjust sample column
+  run2 = run$run2[["P30007_1002"]]
+) %>%
+  mutate(
+    summed = run1 + run2
+  ) %>%
+  left_join(
+    old %>%
+      select(
+        ensembl,
+        old_counts = all_of(sample_col)
+      ),
+    by="ensembl"
+  )
+
+all(cmp$summed == cmp$old_counts)
+
+ggplot(
+  cmp,
+  aes(
+    summed,
+    old_counts
+  )
+) +
+  geom_point(alpha = 0.3) +
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    colour = "red"
+  ) +
+  coord_equal()
+```
+
+indicating that the counts in `Counts_23P074_101.csv` are exactly equal to:
+
+```text
+run1 counts + run2 counts
+```
+
+for every gene.
+
+### Why should run1 and run2 be summed?
+
+`run1` and `run2` represent technical sequencing replicates of the same RNA libraries rather than independent biological samples. Each run therefore captures a subset of the sequencing reads originating from the same library preparation.
+
+In RNA-seq analyses, counts from multiple sequencing runs of the same library are typically summed to recover the total number of reads assigned to each gene. Summing preserves the original read depth and is equivalent to combining sequencing lanes before quantification.
+
+The counts should **not** be averaged, since read counts are discrete measurements and averaging would artificially reduce the sequencing depth by approximately half.
+
+### Conclusion
+
+The previous file (`Counts_23P074_101.csv`) was generated by summing the counts from `BEA23P074run1` and `BEA23P074run2`.
+
+Therefore, when re-processing the data against a newer Ensembl reference (e.g. release 113), the same approach should be used:
+
+```text
+run1 counts + run2 counts = final count matrix
+```
+
+before downstream normalization and differential expression analyses.
+
+```{r Sum-new-run1-and-run2}
+# Read featureCounts outputs
+CMM_path <- "/Volumes/home/Groups/Kristina Broliden Group (0e9ceeed)/Svamp_raw_data/Transcriptomics/original BEA files/"
+files <- c("run1" = 1, "run2" = 2)
+run <- map(files,~read_delim(
+  paste0(CMM_path, "Counts/BEA23P074run",.x,"_subreadCounts_hg38ens_minus_frag_113.txt"),
+  delim = "\t", comment = "#"
+)) %>% map(., ~rename(.x, ensembl = Geneid))
+
+# Sum counts across sequencing runs
+smpl_id <- setdiff(
+  names(run$run1),
+  c("ensembl", "Chr", "Start", "End", "Strand", "Length")
+)
+
+counts_23P074 <- run$run1 %>%
+    mutate(across(
+      all_of(smpl_id),
+      ~ .x + run$run2[[cur_column()]])
+    )
+
+# Optional sanity check
+all(
+  map_lgl(
+    smpl_id,
+    ~ all(
+      counts_23P074[[.x]] ==
+        run$run1[[.x]] + run$run2[[.x]]
+    )
+  )
+)
+
+# sum mapping files:
+mapping_23 <- c("BEA23P074run1", "BEA23P074run2") %>%
+map(., ~ read_tsv(paste0(CMM_path,"Mapping/", .x, "_mapping_113.txt")))
+
+mapping_sum <- mapping_23[[1]] %>%
+  mutate(
+    across(
+      where(is.numeric),
+      ~ .x + mapping_23[[2]][[cur_column()]]
+    )
+  ) %>% select(File, where(is.numeric))
+
+# add summed files into lists
+mapping$BEA23P074 <- mapping_sum
+counts$counts_23P074 <- counts_23P074
+```
+
+### Step 2. Combine all transcriptomics related information
 
 ```{r get-ID-key}
 id <- imap(
@@ -180,12 +359,13 @@ id <- imap(
   ~ mutate(
     .x,
     ID = gsub("^[^_]*_[^_]*_(?:i_)?", "", `User ID`),
+    Batch = sub("_.*$", "", `User ID`),
     `BEA ID` = sub("^(.*)_(\\d+)i?_.*$", "\\1_\\2", `User ID`),
     .keep = "unused"
   )
   #}
 ) %>%
-  map(., ~ select(.x, `NGI ID`, `BEA ID`, ID)) %>%
+  map(., ~ select(.x, `NGI ID`, Batch, `BEA ID`, ID)) %>%
   bind_rows() %>%
   # add svamp_ID:
   left_join(., select(smpl_IDs, `BEA ID`, svamp_ID, ), by = "BEA ID") %>%
@@ -238,12 +418,17 @@ id <- id %>%
 ```
 
 ```{r combine-all-mapping-info}
+mapping <- mapping %>%
+  bind_rows() %>%
+  mutate(`NGI ID` = str_extract(File, "^[^_]+_[^_]+"), .after = "File")
+
 id <- id %>%
   left_join(., select(smpl_IDs, `BEA ID`, RIN), by = "BEA ID") %>%
   left_join(., select(mapping, everything()), by = "NGI ID")
 ```
 
 ```{r update-svamp_ID_list.xlsx}
+#| eval: false
 svamp_ID_list <- read_xlsx(
   "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/svamp_ID_list.xlsx",
   na = "NA"
@@ -274,7 +459,7 @@ svamp_ID_list_ <- svamp_ID_list %>%
 ```{r merge-count-tables}
 # Define common genes across all studies
 # to dubble check that they are the same
-common_genes <- reduce(
+common_genes <- purrr::reduce(
   map(counts, pull, ensembl),
   intersect
 )
@@ -282,7 +467,7 @@ length(common_genes)
 map(counts, ~ dim(.x))
 
 # Merge datasets on ensembl id
-trx_merged <- reduce(
+trx_merged <- purrr::reduce(
   counts,
   full_join,
   by = c("ensembl", "Chr", "Start", "End", "Strand", "Length")
@@ -562,8 +747,8 @@ sort(table(trx_annotated[[1]]$gene_biotype), decreasing = T)
 ```{r save-count-table}
 # save count tables with svamp_ID
 write_csv(
-  trx_merged_,
-  "../Tidy_data/Transcriptomics/Counts_all_trx_samples.csv"
+  trx_annotated[[1]],
+  "../Tidy_data/Transcriptomics/Counts_all_trx_samples_116.csv"
 )
 # counts_comb <- read_csv("Tidy_data/Counts_trx.csv")
 
@@ -1045,6 +1230,67 @@ write_csv(
 # tissue_counts <- read_csv("../Tidy_data/Metagenomics/Metageonome_all_tissue_metaphlan.csv")
 ```
 
+```{r clean-up-counts-1928-run}
+# Load count data, last Run of tissue from 1928:
+tissue_data_run2_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metagenomics/biopsi/Tissue_metagenomics_1928.xlsx"
+
+counts_info <- read_xlsx(tissue_data_run2_path,
+  skip = 1, sheet = "Sample Info", na = "NA"
+)
+lvl <- c("Species", "Genus", "Family", "Order", "Class", "Phylum", "Domain") %>% set_names()
+tissue_counts <- map(lvl, ~read_xlsx(tissue_data_run2_path,
+  skip = 1, sheet = .x, na = "NA"
+))
+
+# Sample 1928 key:
+n <- c(`8gPR/17` = "S76_3M", `8gPR/2` = "S79_3M", `8gPR/3` = "S82_3M", 
+`8gPR/5` = "S83_3M", `8gPR/16` = "S89_3M", `8gPR/8` = "S90_3M", 
+`8gPR/14` = "S91_3M", `8gPR/1` = "S77_3M", `8gPR/6` = "S85_3M", 
+`8gPR/18` = "S86_BL", `8gPR/4` = "S87_BL", `8gPR/15` = "S87_3M", 
+`8gPR/7` = "S88_BL", `8gPR/10` = "S89_BL", `8gPR/9` = "S90_BL", 
+`8gPR/19` = "S91_BL", `8gPR/21` = "S20_extr1", `8gPR/20` = "S69_BL_extr1", 
+`8gPR/13` = "S05_extr2", `8gPR/12` = "S79_BL_extr1", `8gPR/11` = "S45_extr1")
+# n <- filter(Count_info, Batch == "BEA26P064") %>% with(set_names(svamp_ID, `1928_ID`))
+
+# combine xls sheets into one table for counts and percent respectively:
+counts_percent <- tissue_counts %>% 
+  imap(., ~select(.x, `1928_ID`=`Sample ID`, `Scientific Name`, contains(.y))) %>%
+  imap(., ~mutate(.x, svamp_ID = n[`1928_ID`])) %>%
+  imap(., ~select(.x, svamp_ID, `Scientific Name`, value=contains(.y))) %>%
+  imap(., ~mutate(.x, value = as.double(value))) %>%
+  imap(., ~filter(.x, !(is.na(`Scientific Name`)))) %>%
+  imap(., ~pivot_wider(.x, names_from = svamp_ID, values_fill = 0) ) %>%
+  imap(., ~mutate(.x, level = .y, .after="Scientific Name"))
+
+counts_reads <- tissue_counts %>% 
+  imap(., ~select(.x, `1928_ID`=`Sample ID`, `Scientific Name`, "Number of Reads")) %>%
+  imap(., ~mutate(.x, svamp_ID = n[`1928_ID`])) %>%
+  imap(., ~select(.x, svamp_ID, `Scientific Name`, value="Number of Reads")) %>%
+  imap(., ~mutate(.x, value = as.double(value))) %>%
+  imap(., ~filter(.x, !(is.na(`Scientific Name`)))) %>%
+  imap(., ~pivot_wider(.x, names_from = svamp_ID, values_fill = 0) ) %>%
+  imap(., ~mutate(.x, level = .y, .after="Scientific Name"))
+
+# combine table:
+counts_1928 <- list(reads = counts_reads, percent = counts_percent) %>%
+  map(~bind_rows(.x)) %>%
+  map(~ mutate(.x, level = case_when(
+    level == "Domain" ~ "Kingdom",
+    TRUE ~ level))) 
+```
+
+```{r save-files}
+counts_1928 %>%
+  imap(~write_csv(.x, paste0("../Tidy_data/Metagenomics/Metageonome_1928_tissue_",.y,".csv")))
+```
+
+```{r merge-CTMR-and-1928-runs}
+counts_CTMR <- read_csv("../Tidy_data/Metagenomics/Metageonome_all_tissue_metaphlan.csv")
+counts_1928 <- counts_1928$percent
+
+
+```
+
 #### Format count info table
 
 ```{r count-info-tissue}
@@ -1087,7 +1333,196 @@ prepro <- bind_rows(prepro1, prepro2) %>%
     )
   )
 
-write_csv(prepro, "../Tidy_data/Metagenomics/Read_count_info_tissue.csv")
+write_csv(prepro, "../Tidy_data/Metagenomics/old/Read_count_info_tissue_CTMR.csv")
+# count_info_tissue <- read_csv("../Tidy_data/Metagenomics/old/Read_count_info_tissue_CTMR.csv")
+```
+
+```{r count-info-tissue-lastrun}
+# Last Run of tissue from 1928:
+tissue_data_run2_path <- "/Users/vilkal/work/Brolidens_work/Projects/Candida-omics/data/Metagenomics/biopsi/Tissue_metagenomics_1928.xlsx"
+
+counts_info_1928 <- read_xlsx(tissue_data_run2_path,
+  skip = 1, sheet = "Sample Info", na = "NA"
+)
+
+# extraction information
+Combined <- read_xlsx(
+  "../Tidy_data/Transcriptomics/BEA_Extraction_RNA_DNA_QC.xlsx",
+  skip = 1, sheet = "Combined"
+) %>%
+  mutate(
+    Batch = str_extract(`BEA ID`, "^[^_]+"), .after="barcode_shotgun_tissue") %>%
+  mutate(across(c(`DNA Conc [ng/ul] Nanodrop`, `Total amount DNA [ng]`), as.double))
+```
+
+```{r merge-all-extraction-and-count-data}
+vars <- c("Number of reads (before qc)", "Number of reads (after qc)", "Average read length (bp) (before qc)",
+"Average read length (bp) (after qc)", "Average error rate (%) (before qc)", "Average error rate (%) (after qc)",
+"Number of reads – Human (removed)", "Number of reads – Bacteria", "Number of reads – Fungi", "Number of reads – Viruses")
+
+counts_info_1928 <- counts_info_1928 %>%
+  filter(!(is.na(Name))) %>%
+  mutate(File_name = Sample) %>%
+  mutate(Batch = "BEA26P064") %>%
+  mutate(Sample = stringr::word(Sample, 2, sep = stringr::fixed("__"))) %>%
+  select(File_name, barcode_shotgun_tissue=Sample, `Sample ID`, Batch, any_of(vars)) %>% #`BEA ID`, Sample, svamp_ID,
+  mutate(after_kraken2_host_removal = .data[["Number of reads (after qc)"]] - .data[["Number of reads – Human (removed)"]])
+  
+count_info_tissue_run2 <- counts_info_1928 %>%
+  left_join(., select(Combined, DS_ID, `BEA ID`, barcode_shotgun_tissue, svamp_ID, `DNA Conc [ng/ul] Nanodrop`, `Total amount DNA [ng]`), by="barcode_shotgun_tissue") %>%
+   mutate(n = n(), .by="svamp_ID", .after="File_name") %>% 
+   # arrange(desc(n)) %>%
+   # there are two DNA extractions of sample S05
+   # we assume its the last extraction with the higest DNA yeald 
+   # that has been used for re-sequencing of sample S05
+   filter(!(`BEA ID` == "BEA23P074_11")) %>%
+   arrange(match(`BEA ID`, Combined$`BEA ID`[1:21], )) %>%
+   select(-n)
+
+# count_info_tissue_CTMR <- read_csv("../Tidy_data/Metagenomics/old/Read_count_info_tissue_CTMR.csv")
+count_info_tissue_run1 <- count_info_tissue_CTMR %>%
+  select(File_name=Flowcell_L1_bc, svamp_ID, DS_ID,"BEA ID"=BEA_ID, barcode_shotgun_tissue, "Number of reads (before qc)"=before_fastp, "Number of reads (after qc)"=after_fastp, after_kraken2_host_removal) %>%
+  mutate(File_name = paste0("242_MiKantarell__",`BEA ID`,"__",File_name)) %>%
+  mutate(File_name = str_replace(File_name, "L01", "L1")) %>%
+  left_join(., select(Combined, "BEA ID", barcode_shotgun_tissue, `DNA Conc [ng/ul] Nanodrop`, `Total amount DNA [ng]`), by=c("BEA ID","barcode_shotgun_tissue")) %>%
+  mutate(Batch = str_extract(`BEA ID`, "^[^_]+"), .after="BEA ID") 
+
+ Count_info <- count_info_tissue_run2 %>%
+  select(File_name, DS_ID, svamp_ID, "1928_ID"=`Sample ID`, "BEA ID", Batch, barcode_shotgun_tissue, "Number of reads (before qc)", "Number of reads (after qc)",after_kraken2_host_removal, `DNA Conc [ng/ul] Nanodrop`, `Total amount DNA [ng]`) %>%
+  bind_rows(., count_info_tissue_run1) 
+
+# we now have to make the batch samples have uniqe names for run 3:
+Count_info <- Count_info %>%
+  arrange(Batch) %>%
+  mutate(svamp_ID = make.unique(str_replace(.$svamp_ID, "_extr\\d", ""), sep = "_extr"))
+
+write_csv(Count_info, "../Tidy_data/Metagenomics/Read_count_info_tissue.csv")
+# Count_info <- read_csv("../Tidy_data/Metagenomics/Read_count_info_tissue.csv")
+```
+
+```{r get-spike-in-read-count}
+# Get spike-in bacterial counts:
+spike_1928 <- counts_reads$Genus %>%
+  filter(`Scientific Name` == "Alicyclobacillus") %>%
+  pivot_longer(cols = matches("S\\d\\d"), names_to = "svamp_ID",  values_to = "Spike-in (Alicyclobacillus)")
+spike_in_1928 <- set_names(spike_1928$`Spike-in (Alicyclobacillus)`, spike_1928$svamp_ID)
+
+# Combine spike-in info from CTMR run and 1928 run:
+count_info_tissue_no_spike <- read_csv("../Tidy_data/Metagenomics/count_info_tissue_no_spike.csv")
+spike_in_CTMR <- set_names(count_info_tissue_no_spike$bac_counts_no_spikein, count_info_tissue_no_spike$svamp_ID)
+
+
+```
+
+
+```{r read_count-QC}
+C <- Count_info %>%
+  filter(!(grepl("Neg|Pos", .$`BEA ID`))) %>%
+  mutate(bac_counts_no_spikein = spike_in_CTMR[svamp_ID], .after = "after_kraken2_host_removal") %>%
+  mutate(bac_counts_no_spikein = ifelse(
+      is.na(bac_counts_no_spikein),
+      after_kraken2_host_removal - spike_in_1928[svamp_ID],
+      bac_counts_no_spikein
+    )
+  )
+
+# write_csv(C, "../Tidy_data/Metagenomics/Read_count_info_tissue.csv")
+
+p1 <- ggplot(C, aes(x = `DNA Conc [ng/ul] Nanodrop`,
+                       y = bac_counts_no_spikein+1)) +
+  geom_point(size = 2.5, alpha = 0.8, aes(colour = Batch)) +
+  geom_smooth(method = "lm", se = TRUE) +
+  scale_y_log10(breaks = scales::breaks_log(n = 10), 
+  labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  labs(
+    x = "DNA concentration (ng/µL)",
+    y = "Reads after host and spike-in removal",
+    title = "Bacterial reads vs. DNA concentration"
+  ) +
+  theme_bw() + theme(legend.position = "none", 
+  plot.title = element_text(size=8),
+  axis.title = element_text(size=8))
+
+# quartz(height = 6, width = 6, dpi = 120)
+p <- ggplot(C, aes(
+  x = `Number of reads (after qc)`,
+  y = bac_counts_no_spikein,
+  color = Batch
+)) +
+  geom_point(alpha = 0.8) +
+  scale_x_log10(labels = scales::label_number(scale = 1e-6, suffix = "M")) +
+  scale_y_log10(breaks = scales::breaks_log(n = 10), 
+  labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  theme_bw() +
+  labs(
+    x = "Reads after QC (log10)",
+    y = "Bacterial reads (log10)",
+    title = "Bacterial reads vs. sequencing depth"
+  ) + theme(legend.position = "none", 
+  axis.title = element_text(size=8),
+  plot.title = element_text(size=8))
+
+p2 <- ggplot(C, aes(x = Batch, y = `Total amount DNA [ng]`, colour = Batch)) +
+  geom_boxplot(
+    aes(group = Batch),
+    width = 0.6,
+    outlier.shape = NA,
+    alpha = 0.3
+  ) +
+  geom_jitter(
+    width = 0.15,
+    size = 2.5,
+    alpha = 0.8
+  ) +
+  labs(
+    x = "Batch",
+    y = "DNA concentration (ng/µL)",
+    title = "DNA concentration across batches"
+  ) +
+  theme_bw() +
+  theme(legend.position = "none",
+    plot.title = element_text(size=8),
+    axis.title = element_text(size=8),
+    axis.text = element_text(size=8),
+    panel.grid.major.x = element_blank()
+  )
+
+p3 <- ggplot(C, aes(x = Batch, y = bac_counts_no_spikein)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.7, aes(colour = Batch)) +
+  scale_y_log10(breaks = scales::breaks_log(n = 10), 
+  labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  theme_bw() +
+  theme(legend.position = "none",
+    plot.title = element_text(size=8),
+    axis.title = element_text(size=8),
+    axis.text = element_text(size=8)
+    #axis.text.x = element_text(angle = 45, hjust = 1, size=8)
+    ) +
+  labs(
+    x = "Batch",
+    y = "Bacterial reads (log10)",
+    title = "Bacterial reads by batch"
+  ) 
+
+# quartz(height = 8, width = 10, dpi = 120)
+plot <- plot_grid(plot_grid(p1, p, ncol = 2), plot_grid(p2, p3, ncol=2), ncol = 1)
+ggsave("../Tidy_data/Metagenomics/Metageonome_tissue_read_QC.png", plot, width = 8, height = 10)
+
+
+library(GGally)
+# quartz(height = 8, width = 8, dpi = 120)
+cor_plot <- C %>%
+  select(
+    Batch,
+    bac_counts_no_spikein,
+    `Number of reads (after qc)`,
+    `DNA Conc [ng/ul] Nanodrop`,
+    `Total amount DNA [ng]`
+  ) %>%
+  ggpairs(mapping = aes(colour = Batch))
+
+ggsave("../Tidy_data/Metagenomics/Metageonome_tissue_read_QC_cor.png", cor_plot, width = 10, height = 10)
 ```
 
 ```{r merge-vagswab-and-tissue}
