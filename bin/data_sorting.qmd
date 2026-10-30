@@ -1227,7 +1227,7 @@ write_csv(
   "../Tidy_data/Metagenomics/Metageonome_all_tissue_metaphlan.csv"
 )
 
-# tissue_counts <- read_csv("../Tidy_data/Metagenomics/Metageonome_all_tissue_metaphlan.csv")
+# tissue_counts_CTMR <- read_csv("../Tidy_data/Metagenomics/Metageonome_all_tissue_metaphlan.csv")
 ```
 
 ```{r clean-up-counts-1928-run}
@@ -1282,13 +1282,7 @@ counts_1928 <- list(reads = counts_reads, percent = counts_percent) %>%
 ```{r save-files}
 counts_1928 %>%
   imap(~write_csv(.x, paste0("../Tidy_data/Metagenomics/Metageonome_1928_tissue_",.y,".csv")))
-```
-
-```{r merge-CTMR-and-1928-runs}
-counts_CTMR <- read_csv("../Tidy_data/Metagenomics/Metageonome_all_tissue_metaphlan.csv")
-counts_1928 <- counts_1928$percent
-
-
+# counts_1928 <- imap(c("reads","percent"),~read_csv(paste0("../Tidy_data/Metagenomics/Metageonome_1928_tissue_",.y,".csv")))
 ```
 
 #### Format count info table
@@ -1355,6 +1349,12 @@ Combined <- read_xlsx(
   mutate(across(c(`DNA Conc [ng/ul] Nanodrop`, `Total amount DNA [ng]`), as.double))
 ```
 
+```{r}
+counts_CTMR %>%
+  filter(level == "phylum")
+  filter(level == "kingdom")
+```
+
 ```{r merge-all-extraction-and-count-data}
 vars <- c("Number of reads (before qc)", "Number of reads (after qc)", "Average read length (bp) (before qc)",
 "Average read length (bp) (after qc)", "Average error rate (%) (before qc)", "Average error rate (%) (after qc)",
@@ -1366,7 +1366,8 @@ counts_info_1928 <- counts_info_1928 %>%
   mutate(Batch = "BEA26P064") %>%
   mutate(Sample = stringr::word(Sample, 2, sep = stringr::fixed("__"))) %>%
   select(File_name, barcode_shotgun_tissue=Sample, `Sample ID`, Batch, any_of(vars)) %>% #`BEA ID`, Sample, svamp_ID,
-  mutate(after_kraken2_host_removal = .data[["Number of reads (after qc)"]] - .data[["Number of reads – Human (removed)"]])
+  mutate(after_kraken2_host_removal = .data[["Number of reads (after qc)"]] - .data[["Number of reads – Human (removed)"]]) %>%
+  mutate(microbial_reads = .data[["Number of reads – Bacteria"]] + .data[["Number of reads – Fungi"]]+.data[["Number of reads – Viruses"]])
   
 count_info_tissue_run2 <- counts_info_1928 %>%
   left_join(., select(Combined, DS_ID, `BEA ID`, barcode_shotgun_tissue, svamp_ID, `DNA Conc [ng/ul] Nanodrop`, `Total amount DNA [ng]`), by="barcode_shotgun_tissue") %>%
@@ -1388,7 +1389,7 @@ count_info_tissue_run1 <- count_info_tissue_CTMR %>%
   mutate(Batch = str_extract(`BEA ID`, "^[^_]+"), .after="BEA ID") 
 
  Count_info <- count_info_tissue_run2 %>%
-  select(File_name, DS_ID, svamp_ID, "1928_ID"=`Sample ID`, "BEA ID", Batch, barcode_shotgun_tissue, "Number of reads (before qc)", "Number of reads (after qc)",after_kraken2_host_removal, `DNA Conc [ng/ul] Nanodrop`, `Total amount DNA [ng]`) %>%
+  select(File_name, DS_ID, svamp_ID, "1928_ID"=`Sample ID`, "BEA ID", Batch, barcode_shotgun_tissue, "Number of reads (before qc)", "Number of reads (after qc)", "Number of reads – Bacteria", "Number of reads – Fungi", after_kraken2_host_removal, `DNA Conc [ng/ul] Nanodrop`, `Total amount DNA [ng]`) %>%
   bind_rows(., count_info_tissue_run1) 
 
 # we now have to make the batch samples have uniqe names for run 3:
@@ -1400,7 +1401,9 @@ write_csv(Count_info, "../Tidy_data/Metagenomics/Read_count_info_tissue.csv")
 # Count_info <- read_csv("../Tidy_data/Metagenomics/Read_count_info_tissue.csv")
 ```
 
+This section was moved to the QC_Tissue_Metagnomics script:
 ```{r get-spike-in-read-count}
+#| eval: false
 # Get spike-in bacterial counts:
 spike_1928 <- counts_reads$Genus %>%
   filter(`Scientific Name` == "Alicyclobacillus") %>%
@@ -1411,119 +1414,25 @@ spike_in_1928 <- set_names(spike_1928$`Spike-in (Alicyclobacillus)`, spike_1928$
 count_info_tissue_no_spike <- read_csv("../Tidy_data/Metagenomics/count_info_tissue_no_spike.csv")
 spike_in_CTMR <- set_names(count_info_tissue_no_spike$bac_counts_no_spikein, count_info_tissue_no_spike$svamp_ID)
 
-
-```
-
-
-```{r read_count-QC}
+Human_detected <- counts_reads$Genus[2, 3:ncol(counts_reads$Genus)] %>% pivot_longer(everything()) %>% deframe()
 C <- Count_info %>%
-  filter(!(grepl("Neg|Pos", .$`BEA ID`))) %>%
+  mutate(Human_keept = Human_detected[.$svamp_ID]) %>%
+  mutate("Number of reads – Fungi" = ifelse(is.na(.$`Number of reads – Fungi`), 0, .$`Number of reads – Fungi`)) %>%
+  mutate("Number of reads – Bacteria" = ifelse(is.na(.$`Number of reads – Bacteria`), .$after_kraken2_host_removal, .$`Number of reads – Bacteria`)) %>%
   mutate(bac_counts_no_spikein = spike_in_CTMR[svamp_ID], .after = "after_kraken2_host_removal") %>%
-  mutate(bac_counts_no_spikein = ifelse(
+    mutate(bac_counts_no_spikein = ifelse(
       is.na(bac_counts_no_spikein),
-      after_kraken2_host_removal - spike_in_1928[svamp_ID],
+    `Number of reads – Bacteria` - spike_in_1928[svamp_ID],
       bac_counts_no_spikein
     )
   )
 
 # write_csv(C, "../Tidy_data/Metagenomics/Read_count_info_tissue.csv")
-
-p1 <- ggplot(C, aes(x = `DNA Conc [ng/ul] Nanodrop`,
-                       y = bac_counts_no_spikein+1)) +
-  geom_point(size = 2.5, alpha = 0.8, aes(colour = Batch)) +
-  geom_smooth(method = "lm", se = TRUE) +
-  scale_y_log10(breaks = scales::breaks_log(n = 10), 
-  labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
-  labs(
-    x = "DNA concentration (ng/µL)",
-    y = "Reads after host and spike-in removal",
-    title = "Bacterial reads vs. DNA concentration"
-  ) +
-  theme_bw() + theme(legend.position = "none", 
-  plot.title = element_text(size=8),
-  axis.title = element_text(size=8))
-
-# quartz(height = 6, width = 6, dpi = 120)
-p <- ggplot(C, aes(
-  x = `Number of reads (after qc)`,
-  y = bac_counts_no_spikein,
-  color = Batch
-)) +
-  geom_point(alpha = 0.8) +
-  scale_x_log10(labels = scales::label_number(scale = 1e-6, suffix = "M")) +
-  scale_y_log10(breaks = scales::breaks_log(n = 10), 
-  labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
-  theme_bw() +
-  labs(
-    x = "Reads after QC (log10)",
-    y = "Bacterial reads (log10)",
-    title = "Bacterial reads vs. sequencing depth"
-  ) + theme(legend.position = "none", 
-  axis.title = element_text(size=8),
-  plot.title = element_text(size=8))
-
-p2 <- ggplot(C, aes(x = Batch, y = `Total amount DNA [ng]`, colour = Batch)) +
-  geom_boxplot(
-    aes(group = Batch),
-    width = 0.6,
-    outlier.shape = NA,
-    alpha = 0.3
-  ) +
-  geom_jitter(
-    width = 0.15,
-    size = 2.5,
-    alpha = 0.8
-  ) +
-  labs(
-    x = "Batch",
-    y = "DNA concentration (ng/µL)",
-    title = "DNA concentration across batches"
-  ) +
-  theme_bw() +
-  theme(legend.position = "none",
-    plot.title = element_text(size=8),
-    axis.title = element_text(size=8),
-    axis.text = element_text(size=8),
-    panel.grid.major.x = element_blank()
-  )
-
-p3 <- ggplot(C, aes(x = Batch, y = bac_counts_no_spikein)) +
-  geom_boxplot(outlier.shape = NA) +
-  geom_jitter(width = 0.15, alpha = 0.7, aes(colour = Batch)) +
-  scale_y_log10(breaks = scales::breaks_log(n = 10), 
-  labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
-  theme_bw() +
-  theme(legend.position = "none",
-    plot.title = element_text(size=8),
-    axis.title = element_text(size=8),
-    axis.text = element_text(size=8)
-    #axis.text.x = element_text(angle = 45, hjust = 1, size=8)
-    ) +
-  labs(
-    x = "Batch",
-    y = "Bacterial reads (log10)",
-    title = "Bacterial reads by batch"
-  ) 
-
-# quartz(height = 8, width = 10, dpi = 120)
-plot <- plot_grid(plot_grid(p1, p, ncol = 2), plot_grid(p2, p3, ncol=2), ncol = 1)
-ggsave("../Tidy_data/Metagenomics/Metageonome_tissue_read_QC.png", plot, width = 8, height = 10)
-
-
-library(GGally)
-# quartz(height = 8, width = 8, dpi = 120)
-cor_plot <- C %>%
-  select(
-    Batch,
-    bac_counts_no_spikein,
-    `Number of reads (after qc)`,
-    `DNA Conc [ng/ul] Nanodrop`,
-    `Total amount DNA [ng]`
-  ) %>%
-  ggpairs(mapping = aes(colour = Batch))
-
-ggsave("../Tidy_data/Metagenomics/Metageonome_tissue_read_QC_cor.png", cor_plot, width = 10, height = 10)
+# Count_info <- read_csv("../Tidy_data/Metagenomics/Read_count_info_tissue.csv")
 ```
+
+There is a seperate script with lots of visulazations of the read count statistics across the batches:\
+"QC_Tissue_1928run_report.qmd"
 
 ```{r merge-vagswab-and-tissue}
 key_vagswab <- read_csv(
