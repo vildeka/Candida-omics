@@ -439,7 +439,7 @@ Some metabolites have extremely poor reproducibility (RDS up to 200%)
 
 Correlations between QC samples were high (r = 0.78–0.99), indicating consistent overall metabolite profiles. However, QC1 showed systematically higher signal intensities than QC2–QC4. 
 
-suggest that:\
+### suggest that:
 - The metabolite profiles are very similar.
 - QC1 has a systematically higher intensity level.
 - QC2-QC4 look almost identical.
@@ -805,12 +805,13 @@ matrix <- mat[keep, ]
 # ---------------------------
 # Log transform
 # ---------------------------
-# matrix <- log1p(matrix)
+matrix_log <- log1p(matrix)
 
 # ---------------------------
 # Scale metabolites
 # (recommended for MOFA)
 # ---------------------------
+matrix_log <- t(scale(t(matrix_log)))
 matrix <- t(scale(t(matrix)))
 
 # Remove metabolites that
@@ -890,12 +891,18 @@ samples as rows and features as columns, thus the transformation is VERY importa
 ########################
 # SAVE NORMALIZED DATA #
 ########################
+# scaled only
 matrix %>%
   as_tibble(., rownames = "Metabolite") %>%
   {
     . ->> norm_df
   } %>%
   write_csv(., "../Results/MixOmic/Metabolom_Normalized.csv")
+
+# log10 before scaling
+matrix_log %>%
+  as_tibble(., rownames = "Metabolite") %>%
+  write_csv(., "../Results/MixOmic/Metabolom_log_Normalized.csv")
 # norm_df <- read_csv("../Results/MixOmic/Metabolom_Normalized.csv")
 ```
 
@@ -908,7 +915,15 @@ umap <- uwot::umap(
   t(matrix),
   n_neighbors = 15,
   init = "spectral",
-  scale = T,
+  scale = FALSE,
+  seed = 1234
+)
+
+umap_log <- uwot::umap(
+  t(matrix_log),
+  n_neighbors = 15,
+  init = "spectral",
+  scale = FALSE,
   seed = 1234
 )
 
